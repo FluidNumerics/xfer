@@ -1,0 +1,17 @@
+[s3-src]
+type = s3
+provider = Other
+access_key_id = TODO
+secret_access_key = TODO
+endpoint = TODO
+force_path_style = true
+no_check_bucket = true
+
+[s3-dest]
+type = s3
+provider = Other
+access_key_id = TODO
+secret_access_key = TODO
+endpoint = TODO
+force_path_style = true
+no_check_bucket = true
