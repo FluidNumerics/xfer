@@ -1,4 +1,5 @@
-# xfer — Scalable S3↔S3 Transfers with rclone, Slurm, and pyxis
+# xfer
+Scalable S3↔S3 Transfers with rclone, Slurm, and pyxis
 
 ![Xfer source to destination](./graphics/xfer-workflow.png)
 
@@ -315,3 +316,12 @@ run/
 * **rclone handles object-level idempotency**
 * **Slurm handles node-level failures**
 * **xfer handles orchestration only**
+
+
+## Contributing
+* To enable pre-commit `black` formatting, run `uv run pre-commit install`
+  * If necessary, you can format locally with `uv run black .`
+* Name branches as either:
+  * `<your name>/<branch name>` (e.g., `alice/update-readme`)
+  * `<type of contribution>/<branch name>` (e.g., `feature/claude-integration`) (these are usually `feature`, `patch`, or `docs`)
+* Do NOT squash PRs into a single commit
