@@ -113,8 +113,6 @@ uv run xfer run \
   --array-concurrency 96 \
   --rclone-image rclone/rclone:latest \
   --rclone-config ~/.config/rclone/rclone.conf \
-  --rclone-source-opts "--s3-endpoint https://objects.source.example.com" \
-  --rclone-dest-opts   "--s3-endpoint https://objects.dest.example.com" \
   --rclone-flags "--transfers 48 --checkers 96 --fast-list --stats 30s" \
   --partition transfer \
   --cpus-per-task 4 \
@@ -195,9 +193,7 @@ uv run xfer slurm render \
   --cpus-per-task 4 \
   --mem 8G \
   --rclone-image rclone/rclone:latest \
-  --rclone-config ~/.config/rclone/rclone.conf \
-  --rclone-source-opts "--s3-endpoint https://objects.source.example.com" \
-  --rclone-dest-opts   "--s3-endpoint https://objects.dest.example.com"
+  --rclone-config ~/.config/rclone/rclone.conf
 ```
 
 ---
