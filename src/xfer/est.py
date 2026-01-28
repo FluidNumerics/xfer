@@ -104,26 +104,40 @@ def parse_rate_to_Bps(s: str) -> float:
     # Normalize common variants
     unit = unit.replace("Gb/s", "Gbps").replace("Mb/s", "Mbps").replace("Kb/s", "Kbps")
     unit = unit.replace("GB/s", "GBps").replace("MB/s", "MBps").replace("KB/s", "KBps")
-    unit = unit.replace("GiB/s", "GiBps").replace("MiB/s", "MiBps").replace("KiB/s", "KiBps")
+    unit = (
+        unit.replace("GiB/s", "GiBps")
+        .replace("MiB/s", "MiBps")
+        .replace("KiB/s", "KiBps")
+    )
     unit = unit.replace("/s", "ps")
 
     is_bits = unit.endswith("bps") and not unit.endswith("Bps")
     is_bytes = unit.endswith("Bps")
 
     if not (is_bits or is_bytes):
-        raise ValueError(f"Rate unit must be bits or bytes per second (e.g., Gbps or MB/s). Got {unit!r}")
+        raise ValueError(
+            f"Rate unit must be bits or bytes per second (e.g., Gbps or MB/s). Got {unit!r}"
+        )
 
     base_unit = unit[:-3]  # remove bps/Bps
 
     si = {"": 1.0, "K": 1e3, "M": 1e6, "G": 1e9, "T": 1e12, "P": 1e15}
-    iec = {"Ki": 1024.0, "Mi": 1024.0**2, "Gi": 1024.0**3, "Ti": 1024.0**4, "Pi": 1024.0**5}
+    iec = {
+        "Ki": 1024.0,
+        "Mi": 1024.0**2,
+        "Gi": 1024.0**3,
+        "Ti": 1024.0**4,
+        "Pi": 1024.0**5,
+    }
 
     if base_unit in si:
         scale = si[base_unit]
     elif base_unit in iec:
         scale = iec[base_unit]
     else:
-        raise ValueError(f"Unrecognized prefix in rate unit: {base_unit!r} from {unit!r}")
+        raise ValueError(
+            f"Unrecognized prefix in rate unit: {base_unit!r} from {unit!r}"
+        )
 
     # Convert to bytes/sec
     bits_per_sec = value * scale if is_bits else (value * scale * 8.0)
@@ -199,7 +213,9 @@ class Totals:
     bytes_total: int
 
 
-def compute_totals_and_sizes(objs: Iterable[Dict[str, Any]]) -> Tuple[Totals, List[int]]:
+def compute_totals_and_sizes(
+    objs: Iterable[Dict[str, Any]],
+) -> Tuple[Totals, List[int]]:
     count = 0
     total = 0
     sizes: List[int] = []
@@ -230,7 +246,9 @@ def rate_samples(min_Bps: float, max_Bps: float, rows: int = 7) -> List[float]:
     return samples
 
 
-def print_time_table(bytes_total: int, min_rate: str, max_rate: str, prefer_units: str = "Gbps") -> None:
+def print_time_table(
+    bytes_total: int, min_rate: str, max_rate: str, prefer_units: str = "Gbps"
+) -> None:
     min_Bps = parse_rate_to_Bps(min_rate)
     max_Bps = parse_rate_to_Bps(max_rate)
     samples = rate_samples(min_Bps, max_Bps, rows=7)
@@ -246,8 +264,12 @@ def print_time_table(bytes_total: int, min_rate: str, max_rate: str, prefer_unit
         print(f"| {format_rate_Bps(r, prefer=prefer_units)} | {human_seconds(secs)} |")
 
     print("\nRange summary")
-    print(f"- Slow end ({format_rate_Bps(min_Bps, prefer=prefer_units)}): {human_seconds(bytes_total / min_Bps)}")
-    print(f"- Fast end ({format_rate_Bps(max_Bps, prefer=prefer_units)}): {human_seconds(bytes_total / max_Bps)}")
+    print(
+        f"- Slow end ({format_rate_Bps(min_Bps, prefer=prefer_units)}): {human_seconds(bytes_total / min_Bps)}"
+    )
+    print(
+        f"- Fast end ({format_rate_Bps(max_Bps, prefer=prefer_units)}): {human_seconds(bytes_total / max_Bps)}"
+    )
 
 
 # -----------------------------
@@ -285,7 +307,9 @@ def default_pow2_edges(min_bytes: int, max_bytes: int) -> List[int]:
     return edges
 
 
-def histogram_counts(sizes: List[int], edges: List[float]) -> Tuple[List[int], List[int]]:
+def histogram_counts(
+    sizes: List[int], edges: List[float]
+) -> Tuple[List[int], List[int]]:
     """
     Returns (counts, bytes_per_bin) for bins defined by edges.
     Bin i covers [edges[i], edges[i+1]) except last is [.., ..]
@@ -354,11 +378,21 @@ def print_histogram(
 
         unit_map = {
             "B": 1,
-            "KB": 1000, "MB": 1000**2, "GB": 1000**3, "TB": 1000**4, "PB": 1000**5,
-            "KiB": 1024, "MiB": 1024**2, "GiB": 1024**3, "TiB": 1024**4, "PiB": 1024**5,
+            "KB": 1000,
+            "MB": 1000**2,
+            "GB": 1000**3,
+            "TB": 1000**4,
+            "PB": 1000**5,
+            "KiB": 1024,
+            "MiB": 1024**2,
+            "GiB": 1024**3,
+            "TiB": 1024**4,
+            "PiB": 1024**5,
         }
         if unit not in unit_map:
-            raise ValueError(f"Unknown unit {unit!r}. Use B, KB, MB, GB, TB, KiB, MiB, GiB, TiB.")
+            raise ValueError(
+                f"Unknown unit {unit!r}. Use B, KB, MB, GB, TB, KiB, MiB, GiB, TiB."
+            )
         return int(val * unit_map[unit])
 
     min_b = parse_bytes(hist_min)
@@ -391,7 +425,9 @@ def print_histogram(
     print("\nFile size histogram")
     print(f"Files: {total_files}  Total: {human_bytes(total_bytes)}")
     print(f"Observed: min={human_bytes(obs_min)}  max={human_bytes(obs_max)}")
-    print(f"Bins: {len(edges)-1}  Mode: {mode}  Range: {human_bytes(int(edges[0]))} .. {human_bytes(int(edges[-1]))}\n")
+    print(
+        f"Bins: {len(edges)-1}  Mode: {mode}  Range: {human_bytes(int(edges[0]))} .. {human_bytes(int(edges[-1]))}\n"
+    )
 
     print("| Size range | Files | % files | Bytes in bin | % bytes | Histogram |")
     print("|---|---:|---:|---:|---:|---|")
@@ -405,7 +441,11 @@ def print_histogram(
         pb = (100.0 * b / total_bytes) if total_bytes else 0.0
         bar = ascii_bar(c, max_count, width=hist_width)
         # show inclusive/exclusive cleanly
-        label = f"[{human_bytes(lo)}, {human_bytes(hi)})" if i < (len(edges) - 2) else f"[{human_bytes(lo)}, {human_bytes(hi)}]"
+        label = (
+            f"[{human_bytes(lo)}, {human_bytes(hi)})"
+            if i < (len(edges) - 2)
+            else f"[{human_bytes(lo)}, {human_bytes(hi)}]"
+        )
         print(f"| {label} | {c} | {pf:5.1f}% | {human_bytes(b)} | {pb:5.1f}% | {bar} |")
 
 
@@ -413,10 +453,20 @@ def print_histogram(
 # Main
 # -----------------------------
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Sum rclone NDJSON/lsjson, estimate time range, and print size histogram.")
+    ap = argparse.ArgumentParser(
+        description="Sum rclone NDJSON/lsjson, estimate time range, and print size histogram."
+    )
     ap.add_argument("input", help="Path to NDJSON or JSON array file, or '-' for stdin")
-    ap.add_argument("--min-rate", required=True, help="Minimum expected transfer rate (e.g., 5Gbps, 200MB/s)")
-    ap.add_argument("--max-rate", required=True, help="Maximum expected transfer rate (e.g., 40Gbps, 1GB/s)")
+    ap.add_argument(
+        "--min-rate",
+        required=True,
+        help="Minimum expected transfer rate (e.g., 5Gbps, 200MB/s)",
+    )
+    ap.add_argument(
+        "--max-rate",
+        required=True,
+        help="Maximum expected transfer rate (e.g., 40Gbps, 1GB/s)",
+    )
     ap.add_argument(
         "--prefer-units",
         choices=["Gbps", "MBps"],
@@ -425,12 +475,30 @@ def main() -> int:
     )
 
     # Histogram options
-    ap.add_argument("--hist", action="store_true", help="Print file size histogram (default: on)")
-    ap.add_argument("--no-hist", action="store_true", help="Disable file size histogram")
-    ap.add_argument("--hist-mode", choices=["pow2", "log"], default="pow2", help="Histogram binning mode")
-    ap.add_argument("--hist-min", default="1KiB", help="Histogram minimum edge (e.g., 1KiB, 1MiB)")
-    ap.add_argument("--hist-max", default="1TiB", help="Histogram maximum edge (e.g., 1GiB, 10TiB)")
-    ap.add_argument("--hist-bins", type=int, default=0, help="Number of bins (only for --hist-mode log)")
+    ap.add_argument(
+        "--hist", action="store_true", help="Print file size histogram (default: on)"
+    )
+    ap.add_argument(
+        "--no-hist", action="store_true", help="Disable file size histogram"
+    )
+    ap.add_argument(
+        "--hist-mode",
+        choices=["pow2", "log"],
+        default="pow2",
+        help="Histogram binning mode",
+    )
+    ap.add_argument(
+        "--hist-min", default="1KiB", help="Histogram minimum edge (e.g., 1KiB, 1MiB)"
+    )
+    ap.add_argument(
+        "--hist-max", default="1TiB", help="Histogram maximum edge (e.g., 1GiB, 10TiB)"
+    )
+    ap.add_argument(
+        "--hist-bins",
+        type=int,
+        default=0,
+        help="Number of bins (only for --hist-mode log)",
+    )
     ap.add_argument("--hist-width", type=int, default=40, help="ASCII bar width")
 
     args = ap.parse_args()
@@ -453,7 +521,9 @@ def main() -> int:
     print(f"Total bytes:     {totals.bytes_total}")
     print(f"Total size:      {human_bytes(totals.bytes_total)}")
 
-    print_time_table(totals.bytes_total, args.min_rate, args.max_rate, prefer_units=args.prefer_units)
+    print_time_table(
+        totals.bytes_total, args.min_rate, args.max_rate, prefer_units=args.prefer_units
+    )
 
     if do_hist:
         print_histogram(
@@ -470,4 +540,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
