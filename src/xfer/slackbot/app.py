@@ -5,6 +5,7 @@ Slack Bolt application for the xfer data transfer bot.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from slack_bolt import App
@@ -14,6 +15,28 @@ from .claude_agent import ClaudeAgent
 from .config import BotConfig
 
 logger = logging.getLogger(__name__)
+
+
+def markdown_to_slack(text: str) -> str:
+    """
+    Convert standard markdown to Slack's mrkdwn format.
+
+    This is a safety net in case Claude outputs standard markdown
+    despite being instructed to use Slack format.
+    """
+    # Convert **bold** to *bold* (must do before single asterisk handling)
+    text = re.sub(r"\*\*([^*]+)\*\*", r"*\1*", text)
+
+    # Convert [text](url) to <url|text>
+    text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"<\2|\1>", text)
+
+    # Convert ~~strikethrough~~ to ~strikethrough~
+    text = re.sub(r"~~([^~]+)~~", r"~\1~", text)
+
+    # Remove markdown headers (## Header -> *Header*)
+    text = re.sub(r"^#{1,6}\s+(.+)$", r"*\1*", text, flags=re.MULTILINE)
+
+    return text
 
 
 class ConversationStore:
@@ -107,7 +130,8 @@ def create_app(config: BotConfig | None = None) -> tuple[App, SocketModeHandler]
                 channel, thread_ts, {"role": "assistant", "content": response}
             )
 
-            say(text=response, thread_ts=thread_ts)
+            # Convert any markdown to Slack mrkdwn format
+            say(text=markdown_to_slack(response), thread_ts=thread_ts)
 
         except Exception as e:
             logger.exception(f"Error processing message: {e}")
@@ -158,7 +182,8 @@ def create_app(config: BotConfig | None = None) -> tuple[App, SocketModeHandler]
                     channel, thread_ts, {"role": "assistant", "content": response}
                 )
 
-                say(text=response, thread_ts=thread_ts)
+                # Convert any markdown to Slack mrkdwn format
+                say(text=markdown_to_slack(response), thread_ts=thread_ts)
 
             except Exception as e:
                 logger.exception(f"Error processing DM: {e}")
@@ -191,7 +216,8 @@ def create_app(config: BotConfig | None = None) -> tuple[App, SocketModeHandler]
                         channel, thread_ts, {"role": "assistant", "content": response}
                     )
 
-                    say(text=response, thread_ts=thread_ts)
+                    # Convert any markdown to Slack mrkdwn format
+                    say(text=markdown_to_slack(response), thread_ts=thread_ts)
 
                 except Exception as e:
                     logger.exception(f"Error in thread reply: {e}")

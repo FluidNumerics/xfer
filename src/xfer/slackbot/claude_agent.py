@@ -209,6 +209,19 @@ Custom rclone flags:
 - These are appended to the default flags, not replacing them
 - Common options: --bwlimit (bandwidth limit), --checksum (verify with checksums), --dry-run (test without copying)
 
+Formatting (IMPORTANT - you are responding in Slack, not markdown):
+- Use Slack's mrkdwn format, NOT standard markdown
+- Bold: *text* (single asterisks, not double)
+- Italic: _text_ (underscores)
+- Strikethrough: ~text~
+- Code: `code` (backticks work the same)
+- Code blocks: ```code``` (no language specifier)
+- Links: <https://url|display text> (angle brackets with pipe)
+- Lists: Use bullet points with "• " or simple dashes
+- Do NOT use **double asterisks** for bold
+- Do NOT use [text](url) for links
+- Do NOT use markdown headers like ## Header
+
 Keep responses brief and focused on the task at hand."""
 
 
