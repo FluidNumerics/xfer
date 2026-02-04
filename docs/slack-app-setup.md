@@ -140,6 +140,44 @@ You should see:
 2. Mention the bot: `@xfer-bot what backends are available?`
 3. Try a transfer request: `@xfer-bot transfer data from s3src:bucket/data to s3dst:archive/data`
 
+## Bot Capabilities
+
+### Check data size before transferring
+
+Ask the bot to scan a source and report statistics:
+
+```
+@xfer-bot how much data is in s3src:research/experiment1?
+```
+
+The bot will return:
+- Total file count and size
+- File size distribution histogram
+- Suggested rclone flags based on file sizes
+- Estimated transfer times
+
+### Custom rclone flags
+
+Specify custom flags that are appended to the intelligent defaults:
+
+```
+@xfer-bot transfer s3src:data to s3dst:archive with --bwlimit 100M --checksum
+```
+
+Common options:
+- `--bwlimit 100M` — Limit bandwidth
+- `--checksum` — Verify files with checksums
+- `--dry-run` — Test without copying
+
+### Intelligent flag selection
+
+The bot automatically analyzes file sizes and selects optimal rclone flags:
+- **Small files** (>70% < 1MB): Higher parallelism (`--transfers 64`)
+- **Large files** (>50% > 100MB): Larger buffers (`--buffer-size 256M`)
+- **Mixed**: Balanced defaults
+
+All transfers include `--stats 600s --progress` for ETA tracking.
+
 ## Running as a Service
 
 For production, run the bot as a systemd service:

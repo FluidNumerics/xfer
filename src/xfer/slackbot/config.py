@@ -34,7 +34,8 @@ class RcloneDefaults:
     )
     container_conf_path: str = "/etc/rclone/rclone.conf"
     flags: str = (
-        "--transfers 32 --checkers 64 --fast-list --retries 10 --low-level-retries 20"
+        "--transfers 32 --checkers 64 --fast-list --retries 10 --low-level-retries 20 "
+        "--stats 600s --progress"
     )
 
 

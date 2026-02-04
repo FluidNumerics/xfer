@@ -17,6 +17,7 @@ from .slurm_tools import (
     get_allowed_backends,
     get_job_status,
     get_jobs_by_thread,
+    get_source_stats,
     get_transfer_progress,
     get_transfer_progress_by_job,
     submit_transfer,
@@ -62,6 +63,10 @@ The source and destination should be in rclone format: "remote:bucket/path" (e.g
                 "job_name": {
                     "type": "string",
                     "description": "Custom name for the Slurm job",
+                },
+                "rclone_flags": {
+                    "type": "string",
+                    "description": "Additional rclone flags to append to defaults (e.g., '--bwlimit 100M --checksum')",
                 },
             },
             "required": ["source", "dest"],
@@ -152,6 +157,28 @@ This notifies the support team to review and potentially add the backend.""",
             "required": ["backend_name"],
         },
     },
+    {
+        "name": "get_manifest_stats",
+        "description": """Scan a source path and return file statistics without starting a transfer.
+
+Use this to:
+- Preview the data volume before committing to a transfer
+- Get file count, total size, and size distribution
+- See suggested rclone flags based on file size patterns
+- Estimate transfer times
+
+This is helpful when users want to know "how much data is there?" or "how long will this take?" before starting.""",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "source": {
+                    "type": "string",
+                    "description": "Source path in rclone format (remote:bucket/path)",
+                },
+            },
+            "required": ["source"],
+        },
+    },
 ]
 
 SYSTEM_PROMPT = """You are a helpful data transfer assistant for an HPC cluster. You help researchers submit and monitor data transfer jobs via Slurm.
@@ -162,6 +189,7 @@ Your capabilities:
 - List available storage backends
 - Cancel jobs if requested
 - Request access to new backends on behalf of users
+- Scan source paths to get file statistics and transfer estimates
 
 Guidelines:
 1. Always validate that backends are allowed before submitting transfers
@@ -170,10 +198,16 @@ Guidelines:
 4. Ask for clarification if the source or destination is ambiguous
 5. Be helpful but don't make assumptions about paths - ask if unsure
 6. When reporting job status, include relevant details like progress and any errors
+7. If users want custom rclone flags (e.g., bandwidth limits, checksum verification), pass them via the rclone_flags parameter
 
 Transfer path format:
 - Paths should be in rclone format: "remote:bucket/path"
 - Example: "s3src:research-data/experiment1" or "gcs:archive-bucket/backups"
+
+Custom rclone flags:
+- Users can specify additional rclone flags like '--bwlimit 100M' or '--checksum'
+- These are appended to the default flags, not replacing them
+- Common options: --bwlimit (bandwidth limit), --checksum (verify with checksums), --dry-run (test without copying)
 
 Keep responses brief and focused on the task at hand."""
 
@@ -204,6 +238,7 @@ class ClaudeAgent:
                 num_shards=tool_input.get("num_shards"),
                 time_limit=tool_input.get("time_limit"),
                 job_name=tool_input.get("job_name"),
+                rclone_flags=tool_input.get("rclone_flags"),
             )
             return json.dumps(result.__dict__, default=str)
 
@@ -335,6 +370,26 @@ class ClaudeAgent:
                     ),
                 }
             )
+
+        elif tool_name == "get_manifest_stats":
+            stats = get_source_stats(
+                source=tool_input["source"],
+                config=self.config,
+            )
+            # Convert dataclass to dict for JSON serialization
+            result = {
+                "source": stats.source,
+                "total_files": stats.total_files,
+                "total_bytes": stats.total_bytes,
+                "total_bytes_human": stats.total_bytes_human,
+                "file_size_stats": stats.file_size_stats,
+                "suggested_flags": stats.suggested_flags,
+                "histogram": stats.histogram,
+                "histogram_text": stats.histogram_text,
+            }
+            if stats.error:
+                result["error"] = stats.error
+            return json.dumps(result)
 
         else:
             return json.dumps({"error": f"Unknown tool: {tool_name}"})

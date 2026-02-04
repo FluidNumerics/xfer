@@ -398,6 +398,97 @@ def manifest_shard(
     eprint(f"Wrote {num_shards} shards to {outdir} (records={n}, bytes={total_bytes})")
 
 
+@manifest_app.command("analyze")
+def manifest_analyze(
+    infile: Path = typer.Option(
+        ...,
+        "--in",
+        exists=True,
+        dir_okay=False,
+        help="Input manifest JSONL",
+        resolve_path=True,
+    ),
+    out: Optional[Path] = typer.Option(
+        None,
+        help="Output analysis JSON file (if not specified, prints to stdout)",
+        resolve_path=True,
+    ),
+    base_flags: str = typer.Option(
+        "--retries 10 --low-level-retries 20 --stats 600s --progress",
+        help="Base rclone flags to always include",
+    ),
+) -> None:
+    """
+    Analyze manifest file sizes and suggest optimal rclone flags.
+
+    Examines the file size distribution and recommends transfer settings:
+    - Many small files: higher parallelism (--transfers 64 --checkers 128)
+    - Large files: fewer streams, larger buffers (--transfers 16 --buffer-size 256M)
+    - Mixed: balanced defaults (--transfers 32 --checkers 64)
+    """
+    from .est import (
+        compute_file_size_stats,
+        format_histogram_data,
+        human_bytes,
+        suggest_rclone_flags_from_sizes,
+    )
+
+    # Read manifest and extract sizes
+    sizes: List[int] = []
+    for ln in infile.read_text(encoding="utf-8").splitlines():
+        if not ln.strip():
+            continue
+        try:
+            r = json.loads(ln)
+            size = int(r.get("size") or 0)
+            sizes.append(size)
+        except (json.JSONDecodeError, ValueError):
+            continue
+
+    if not sizes:
+        result = {
+            "status": "error",
+            "error": "No files found in manifest",
+            "suggested_flags": base_flags,
+        }
+    else:
+        stats = compute_file_size_stats(sizes)
+        suggestion = suggest_rclone_flags_from_sizes(sizes)
+        histogram = format_histogram_data(sizes)
+
+        # Combine base flags with profile-specific flags
+        combined_flags = f"{suggestion.flags} {base_flags}"
+
+        result = {
+            "status": "ok",
+            "total_files": stats.total_files,
+            "total_bytes": stats.total_bytes,
+            "total_bytes_human": human_bytes(stats.total_bytes),
+            "file_size_stats": {
+                "min_size": stats.min_size,
+                "min_size_human": human_bytes(stats.min_size),
+                "max_size": stats.max_size,
+                "max_size_human": human_bytes(stats.max_size),
+                "median_size": stats.median_size,
+                "median_size_human": human_bytes(stats.median_size),
+                "small_files_pct": round(stats.small_files_pct, 1),
+                "medium_files_pct": round(stats.medium_files_pct, 1),
+                "large_files_pct": round(stats.large_files_pct, 1),
+            },
+            "profile": suggestion.profile,
+            "profile_explanation": suggestion.explanation,
+            "suggested_flags": combined_flags,
+            "histogram": histogram,
+        }
+
+    json_output = json.dumps(result, indent=2)
+    if out:
+        out.write_text(json_output + "\n", encoding="utf-8")
+        eprint(f"Wrote analysis to {out}")
+    else:
+        print(json_output)
+
+
 # -----------------------------
 # Slurm render/submit
 # -----------------------------

@@ -150,7 +150,35 @@ run/
 
 ---
 
-### 2. Shard the manifest
+### 2. Analyze file size distribution (optional)
+
+Analyze the manifest to see file size statistics and get suggested rclone flags:
+
+```bash
+uv run xfer manifest analyze \
+  --in run/manifest.jsonl \
+  --out run/analysis.json
+```
+
+Output (`analysis.json`):
+```json
+{
+  "status": "ok",
+  "total_files": 125000,
+  "total_bytes": 5368709120,
+  "total_bytes_human": "5.00 GiB",
+  "profile": "small_files",
+  "profile_explanation": "Optimized for small files (82% < 1MB, median 256 KiB)",
+  "suggested_flags": "--transfers 64 --checkers 128 --fast-list --retries 10 ...",
+  "histogram": [...]
+}
+```
+
+The Slack bot runs this analysis automatically on every transfer to select optimal flags.
+
+---
+
+### 3. Shard the manifest
 
 Splits the manifest into balanced shards (by total bytes):
 
@@ -174,7 +202,7 @@ run/
 
 ---
 
-### 3. Render Slurm scripts
+### 4. Render Slurm scripts
 
 Creates:
 
@@ -199,7 +227,7 @@ uv run xfer slurm render \
 
 ---
 
-### 4. Submit the job
+### 5. Submit the job
 
 ```bash
 uv run xfer slurm submit --run-dir run
@@ -264,7 +292,21 @@ sbatch run/sbatch_array.sh
 
 ## Recommended rclone flags (starting points)
 
-### High-throughput S3↔S3
+### Intelligent Auto-Selection (Slack Bot)
+
+When using the Slack bot, rclone flags are **automatically selected** based on file size distribution analysis:
+
+| Profile | Condition | Flags |
+|---------|-----------|-------|
+| **Small files** | >70% files < 1MB | `--transfers 64 --checkers 128 --fast-list` |
+| **Large files** | >50% files > 100MB | `--transfers 16 --checkers 32 --buffer-size 256M` |
+| **Mixed** | Default | `--transfers 32 --checkers 64 --fast-list` |
+
+All profiles include `--retries 10 --low-level-retries 20 --stats 600s --progress` for reliability and logging.
+
+### Manual Flag Selection (CLI)
+
+#### High-throughput S3↔S3
 
 ```text
 --transfers 32
@@ -275,15 +317,23 @@ sbatch run/sbatch_array.sh
 --stats 30s
 ```
 
-### Small objects (metadata heavy)
+#### Small objects (metadata heavy)
 
 ```text
---transfers 16
+--transfers 64
 --checkers 128
 --fast-list
 ```
 
-### Track progress
+#### Large objects
+
+```text
+--transfers 16
+--checkers 32
+--buffer-size 256M
+```
+
+#### Track progress (always recommended)
 
 ```text
 --progress --stats 600s
@@ -296,6 +346,7 @@ sbatch run/sbatch_array.sh
 ```
 run/
   manifest.jsonl
+  analysis.json          # File size analysis and suggested flags
   shards/
     shard_000123.jsonl
     shards.meta.json

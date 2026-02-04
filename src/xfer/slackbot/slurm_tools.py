@@ -17,6 +17,16 @@ from typing import Optional
 
 from .config import BotConfig, slack_comment
 
+from ..est import (
+    compute_file_size_stats,
+    compute_totals_and_sizes,
+    extract_size_bytes,
+    format_histogram_data,
+    format_histogram_text,
+    human_bytes,
+    suggest_rclone_flags_from_sizes,
+)
+
 
 @dataclass
 class JobInfo:
@@ -165,6 +175,7 @@ def _write_prepare_script(
     time_limit: str,
     job_name: str,
     comment: str,
+    rclone_flags: Optional[str] = None,
 ) -> Path:
     """
     Write a batch script that prepares the transfer (manifest + shard + render).
@@ -180,6 +191,9 @@ def _write_prepare_script(
     if config.slurm.qos:
         sbatch_extras_lines.append(f"#SBATCH --qos={config.slurm.qos}")
     sbatch_extras = "\\n".join(sbatch_extras_lines)
+
+    # User flags to append after analysis-suggested flags
+    user_rclone_flags = rclone_flags or ""
 
     script_content = f"""#!/usr/bin/env bash
 #SBATCH --job-name={job_name}-prepare
@@ -210,7 +224,29 @@ xfer manifest build \\
 
 echo "=== Manifest build complete at $(date -Is) ==="
 
-# Phase 2: Shard manifest
+# Phase 2: Analyze manifest to determine optimal rclone flags
+echo "=== Analyzing file size distribution ==="
+xfer manifest analyze \\
+    --in {run_dir}/manifest.jsonl \\
+    --out {run_dir}/analysis.json
+
+# Extract suggested flags from analysis
+SUGGESTED_FLAGS=$(python3 -c "import json; print(json.load(open('{run_dir}/analysis.json'))['suggested_flags'])")
+echo "Profile-based flags: $SUGGESTED_FLAGS"
+
+# Append any user-specified flags
+USER_FLAGS={shlex.quote(user_rclone_flags)}
+if [ -n "$USER_FLAGS" ]; then
+    RCLONE_FLAGS="$SUGGESTED_FLAGS $USER_FLAGS"
+    echo "User flags appended: $USER_FLAGS"
+else
+    RCLONE_FLAGS="$SUGGESTED_FLAGS"
+fi
+echo "Final rclone flags: $RCLONE_FLAGS"
+
+echo "=== Analysis complete at $(date -Is) ==="
+
+# Phase 3: Shard manifest
 xfer manifest shard \\
     --in {run_dir}/manifest.jsonl \\
     --outdir {run_dir}/shards \\
@@ -218,7 +254,7 @@ xfer manifest shard \\
 
 echo "=== Sharding complete at $(date -Is) ==="
 
-# Phase 3: Render Slurm scripts
+# Phase 4: Render Slurm scripts
 xfer slurm render \\
     --run-dir {run_dir} \\
     --num-shards {num_shards} \\
@@ -230,13 +266,13 @@ xfer slurm render \\
     --mem {config.slurm.mem} \\
     --rclone-image {shlex.quote(config.rclone.image)} \\
     --rclone-config {shlex.quote(str(config.rclone.config_path))} \\
-    --rclone-flags {shlex.quote(config.rclone.flags)} \\
+    --rclone-flags "$RCLONE_FLAGS" \\
     --max-attempts {config.slurm.max_attempts} \\
     --sbatch-extras {shlex.quote(sbatch_extras)}
 
 echo "=== Render complete at $(date -Is) ==="
 
-# Phase 4: Submit transfer array job
+# Phase 5: Submit transfer array job
 xfer slurm submit --run-dir {run_dir}
 
 echo "=== Transfer job submitted at $(date -Is) ==="
@@ -258,6 +294,7 @@ def submit_transfer(
     array_concurrency: Optional[int] = None,
     time_limit: Optional[str] = None,
     job_name: Optional[str] = None,
+    rclone_flags: Optional[str] = None,
 ) -> TransferResult:
     """
     Submit a data transfer job via xfer.
@@ -305,6 +342,7 @@ def submit_transfer(
         time_limit=time_limit,
         job_name=job_name,
         comment=comment,
+        rclone_flags=rclone_flags,
     )
 
     # Submit the prepare job
@@ -586,3 +624,158 @@ def cancel_job(job_id: str, channel_id: str, thread_ts: str) -> tuple[bool, str]
         return True, f"Job {job_id} has been cancelled."
     except subprocess.CalledProcessError as e:
         return False, f"Failed to cancel job {job_id}: {e.stderr or str(e)}"
+
+
+@dataclass
+class SourceStats:
+    """Statistics about a source path."""
+
+    source: str
+    total_files: int
+    total_bytes: int
+    total_bytes_human: str
+    file_size_stats: dict
+    suggested_flags: dict
+    histogram: list
+    histogram_text: str
+    error: Optional[str] = None
+
+
+def get_source_stats(source: str, config: BotConfig) -> SourceStats:
+    """
+    Scan a source path and return file statistics without starting a transfer.
+
+    Runs rclone lsjson via container and computes statistics.
+    """
+    # Validate backend first
+    valid, msg = validate_backend(source, config)
+    if not valid:
+        return SourceStats(
+            source=source,
+            total_files=0,
+            total_bytes=0,
+            total_bytes_human="0 B",
+            file_size_stats={},
+            suggested_flags={},
+            histogram=[],
+            histogram_text="",
+            error=msg,
+        )
+
+    # Build rclone lsjson command
+    rclone_cmd = [
+        "rclone",
+        "lsjson",
+        source,
+        "--recursive",
+        "--fast-list",
+        "--files-only",
+        "--config",
+        config.rclone.container_conf_path,
+    ]
+
+    # Build srun command with container
+    mounts = f"{config.rclone.config_path}:{config.rclone.container_conf_path}:ro"
+
+    srun_cmd = [
+        "srun",
+        "-n",
+        "1",
+        "-c",
+        "8",
+        "--container-image",
+        config.rclone.image,
+        "--container-mounts",
+        mounts,
+        "--no-container-remap-root",
+    ] + rclone_cmd
+
+    try:
+        result = run_cmd(srun_cmd, capture=True, check=True)
+        lsjson_output = result.stdout
+    except subprocess.CalledProcessError as e:
+        return SourceStats(
+            source=source,
+            total_files=0,
+            total_bytes=0,
+            total_bytes_human="0 B",
+            file_size_stats={},
+            suggested_flags={},
+            histogram=[],
+            histogram_text="",
+            error=f"Failed to list source: {e.stderr or str(e)}",
+        )
+
+    # Parse JSON output
+    try:
+        items = json.loads(lsjson_output)
+        if not isinstance(items, list):
+            raise ValueError("Expected JSON array from rclone lsjson")
+    except (json.JSONDecodeError, ValueError) as e:
+        return SourceStats(
+            source=source,
+            total_files=0,
+            total_bytes=0,
+            total_bytes_human="0 B",
+            file_size_stats={},
+            suggested_flags={},
+            histogram=[],
+            histogram_text="",
+            error=f"Failed to parse rclone output: {e}",
+        )
+
+    # Extract sizes
+    sizes = []
+    for item in items:
+        size = extract_size_bytes(item)
+        if size is not None:
+            sizes.append(size)
+
+    if not sizes:
+        return SourceStats(
+            source=source,
+            total_files=0,
+            total_bytes=0,
+            total_bytes_human="0 B",
+            file_size_stats={},
+            suggested_flags={},
+            histogram=[],
+            histogram_text="No files found",
+            error=None,
+        )
+
+    # Compute statistics
+    stats = compute_file_size_stats(sizes)
+    flags_suggestion = suggest_rclone_flags_from_sizes(sizes)
+    histogram = format_histogram_data(sizes)
+    histogram_text = format_histogram_text(sizes)
+
+    return SourceStats(
+        source=source,
+        total_files=stats.total_files,
+        total_bytes=stats.total_bytes,
+        total_bytes_human=human_bytes(stats.total_bytes),
+        file_size_stats={
+            "min_size": stats.min_size,
+            "min_size_human": human_bytes(stats.min_size),
+            "max_size": stats.max_size,
+            "max_size_human": human_bytes(stats.max_size),
+            "median_size": stats.median_size,
+            "median_size_human": human_bytes(stats.median_size),
+            "mean_size": int(stats.mean_size),
+            "mean_size_human": human_bytes(int(stats.mean_size)),
+            "p10_size": stats.p10_size,
+            "p90_size": stats.p90_size,
+            "small_files_pct": round(stats.small_files_pct, 1),
+            "medium_files_pct": round(stats.medium_files_pct, 1),
+            "large_files_pct": round(stats.large_files_pct, 1),
+        },
+        suggested_flags={
+            "profile": flags_suggestion.profile,
+            "flags": flags_suggestion.flags,
+            "explanation": flags_suggestion.explanation,
+        },
+        histogram=histogram,
+        histogram_text=histogram_text,
+        error=None,
+    )
