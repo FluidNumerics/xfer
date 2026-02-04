@@ -1,0 +1,77 @@
+# xfer Dashboard Configuration
+# Copy to /etc/xfer/dashboard.yaml or ~/.config/xfer/dashboard.yaml
+
+schema: xfer.dashboard.config.v1
+
+# Authentication
+auth:
+  google:
+    # Create OAuth2 credentials at https://console.cloud.google.com/apis/credentials
+    client_id: "YOUR_CLIENT_ID.apps.googleusercontent.com"
+    client_secret: "YOUR_CLIENT_SECRET"
+    # Only allow users from these email domains
+    allowed_domains:
+      - "example.com"
+  session:
+    # Generate with: python -c "import secrets; print(secrets.token_hex(32))"
+    secret_key: "CHANGE_ME_GENERATE_A_RANDOM_64_CHAR_HEX_STRING"
+    cookie_name: "xfer_session"
+    max_age_seconds: 86400  # 24 hours
+
+# Database
+database:
+  # SQLite for development
+  url: "sqlite+aiosqlite:///var/lib/xfer/dashboard.db"
+  # PostgreSQL for production:
+  # url: "postgresql+asyncpg://user:password@localhost/xfer"
+
+# Slurm job settings (admin-controlled, not user-editable)
+slurm:
+  # Container image for rclone
+  rclone_image: "rclone/rclone:latest"
+
+  # Path to rclone.conf on the cluster
+  rclone_config: "/shared/config/rclone/rclone.conf"
+
+  # Default number of shards for parallel transfers
+  num_shards: 256
+
+  # Maximum concurrent Slurm array tasks
+  array_concurrency: 64
+
+  # Available partitions (first is default)
+  partitions:
+    - "transfer"
+    - "standard"
+
+  # Resource limits per task
+  cpus_per_task: 4
+  mem: "8G"
+  time_limit: "24:00:00"
+  max_attempts: 5
+
+  # rclone copy flags
+  rclone_flags: "--transfers 32 --checkers 64 --fast-list --retries 10 --low-level-retries 20"
+
+  # Extra pyxis flags (optional)
+  pyxis_extra: ""
+
+# Path restrictions
+paths:
+  # Base directory where job run directories will be created
+  run_base_dir: "/scratch/xfer-runs"
+
+  # Allowed source/destination path prefixes
+  # Users can only select paths matching these patterns
+  allowed_prefixes:
+    - "s3src:"       # Allow any path on s3src remote
+    - "s3dst:"       # Allow any path on s3dst remote
+    - "/scratch/"    # Local scratch filesystem
+
+# Dashboard server settings
+server:
+  host: "0.0.0.0"
+  port: 8000
+  # Public URL for OAuth callbacks (must match Google Cloud Console redirect URI)
+  base_url: "https://xfer.example.com"
+  debug: false

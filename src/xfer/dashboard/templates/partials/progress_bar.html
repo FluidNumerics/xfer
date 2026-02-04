@@ -1,0 +1,51 @@
+{% if job.num_shards %}
+<div>
+    <div class="flex justify-between items-center mb-2">
+        <span class="text-sm font-medium text-gray-700">Progress</span>
+        <span class="text-sm text-gray-500">{{ job.shards_done }} / {{ job.num_shards }} shards</span>
+    </div>
+
+    {% set pct_done = (job.shards_done / job.num_shards * 100) if job.num_shards else 0 %}
+    {% set pct_failed = (job.shards_failed / job.num_shards * 100) if job.num_shards else 0 %}
+    {% set pct_running = (job.shards_running / job.num_shards * 100) if job.num_shards else 0 %}
+
+    <div class="w-full bg-gray-200 rounded-full h-4 overflow-hidden">
+        <div class="h-full flex">
+            <div class="bg-green-500 transition-all duration-500" style="width: {{ pct_done }}%"></div>
+            <div class="bg-blue-500 transition-all duration-500" style="width: {{ pct_running }}%"></div>
+            <div class="bg-red-500 transition-all duration-500" style="width: {{ pct_failed }}%"></div>
+        </div>
+    </div>
+
+    <div class="flex gap-6 mt-2 text-sm">
+        <span class="flex items-center">
+            <span class="w-3 h-3 bg-green-500 rounded-full mr-1"></span>
+            <span class="text-gray-600">Done: {{ job.shards_done }}</span>
+        </span>
+        <span class="flex items-center">
+            <span class="w-3 h-3 bg-blue-500 rounded-full mr-1"></span>
+            <span class="text-gray-600">Running: {{ job.shards_running }}</span>
+        </span>
+        <span class="flex items-center">
+            <span class="w-3 h-3 bg-red-500 rounded-full mr-1"></span>
+            <span class="text-gray-600">Failed: {{ job.shards_failed }}</span>
+        </span>
+        {% if progress %}
+        <span class="flex items-center">
+            <span class="w-3 h-3 bg-gray-300 rounded-full mr-1"></span>
+            <span class="text-gray-600">Pending: {{ progress.pending }}</span>
+        </span>
+        {% endif %}
+    </div>
+
+    {% if pct_done >= 100 %}
+    <div class="mt-2 text-sm text-green-600 font-medium">
+        Transfer complete!
+    </div>
+    {% endif %}
+</div>
+{% else %}
+<div class="text-sm text-gray-500">
+    Progress information not yet available. Manifest building in progress...
+</div>
+{% endif %}

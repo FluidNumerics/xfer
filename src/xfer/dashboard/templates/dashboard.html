@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - xfer{% endblock %}
+
+{% block content %}
+<div class="flex justify-between items-center mb-6">
+    <h1 class="text-2xl font-bold text-gray-900">Transfer Jobs</h1>
+    <a href="/jobs/new"
+       class="inline-flex items-center px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors">
+        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+        </svg>
+        New Transfer
+    </a>
+</div>
+
+<!-- Jobs table with htmx polling -->
+<div id="jobs-container"
+     hx-get="/htmx/jobs/table"
+     hx-trigger="load, every 30s"
+     hx-swap="innerHTML">
+    <div class="bg-white rounded-lg shadow p-8 text-center text-gray-500">
+        Loading jobs...
+    </div>
+</div>
+{% endblock %}

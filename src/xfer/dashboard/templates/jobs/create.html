@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+
+{% block title %}New Transfer - xfer Dashboard{% endblock %}
+
+{% block content %}
+<div class="max-w-2xl mx-auto">
+    <h1 class="text-2xl font-bold text-gray-900 mb-6">Create New Transfer</h1>
+
+    {% if error %}
+    <div class="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
+        <div class="flex">
+            <svg class="w-5 h-5 text-red-400" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+            </svg>
+            <p class="ml-3 text-red-700">{{ error }}</p>
+        </div>
+    </div>
+    {% endif %}
+
+    <form method="POST" action="/jobs" class="bg-white rounded-lg shadow-md p-6">
+        <!-- Job Tag -->
+        <div class="mb-6">
+            <label for="tag" class="block text-sm font-medium text-gray-700 mb-2">
+                Job Tag
+            </label>
+            <input type="text"
+                   id="tag"
+                   name="tag"
+                   required
+                   pattern="[a-zA-Z0-9][a-zA-Z0-9_-]*"
+                   maxlength="50"
+                   placeholder="my-dataset-backup"
+                   value="{{ form_data.tag if form_data else '' }}"
+                   class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+            <p class="mt-1 text-sm text-gray-500">
+                Used for job naming: <code class="bg-gray-100 px-1 rounded">xfer_{tag}</code>
+            </p>
+        </div>
+
+        <!-- Source Path -->
+        <div class="mb-6" x-data="{
+            remote: '{{ form_data.source_path.split(':')[0] + ':' if form_data and ':' in form_data.source_path else (remotes[0].prefix if remotes else '') }}',
+            path: '{{ form_data.source_path.split(':')[1] if form_data and ':' in form_data.source_path else '' }}'
+        }">
+            <label class="block text-sm font-medium text-gray-700 mb-2">
+                Source Path
+            </label>
+            <div class="flex gap-2">
+                <select x-model="remote"
+                        class="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                    {% for r in remotes %}
+                    <option value="{{ r.prefix }}">{{ r.display_name }}</option>
+                    {% endfor %}
+                    {% for prefix in local_prefixes %}
+                    <option value="{{ prefix }}">Local: {{ prefix }}</option>
+                    {% endfor %}
+                </select>
+                <input type="text"
+                       x-model="path"
+                       placeholder="bucket/prefix/path"
+                       class="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+            </div>
+            <input type="hidden" name="source_path" :value="remote + path">
+        </div>
+
+        <!-- Destination Path -->
+        <div class="mb-6" x-data="{
+            remote: '{{ form_data.dest_path.split(':')[0] + ':' if form_data and ':' in form_data.dest_path else (remotes[1].prefix if remotes|length > 1 else (remotes[0].prefix if remotes else '')) }}',
+            path: '{{ form_data.dest_path.split(':')[1] if form_data and ':' in form_data.dest_path else '' }}'
+        }">
+            <label class="block text-sm font-medium text-gray-700 mb-2">
+                Destination Path
+            </label>
+            <div class="flex gap-2">
+                <select x-model="remote"
+                        class="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                    {% for r in remotes %}
+                    <option value="{{ r.prefix }}">{{ r.display_name }}</option>
+                    {% endfor %}
+                    {% for prefix in local_prefixes %}
+                    <option value="{{ prefix }}">Local: {{ prefix }}</option>
+                    {% endfor %}
+                </select>
+                <input type="text"
+                       x-model="path"
+                       placeholder="bucket/prefix/path"
+                       class="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+            </div>
+            <input type="hidden" name="dest_path" :value="remote + path">
+        </div>
+
+        <!-- Admin Settings (read-only) -->
+        <div class="bg-gray-50 rounded-lg p-4 mb-6">
+            <h3 class="text-sm font-medium text-gray-700 mb-3">Admin Settings (pre-configured)</h3>
+            <dl class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                <dt class="text-gray-500">Shards:</dt>
+                <dd class="text-gray-900">{{ config.slurm.num_shards }}</dd>
+
+                <dt class="text-gray-500">Concurrency:</dt>
+                <dd class="text-gray-900">{{ config.slurm.array_concurrency }}</dd>
+
+                <dt class="text-gray-500">Partition:</dt>
+                <dd class="text-gray-900">{{ config.slurm.partitions[0] }}</dd>
+
+                <dt class="text-gray-500">CPUs/Task:</dt>
+                <dd class="text-gray-900">{{ config.slurm.cpus_per_task }}</dd>
+
+                <dt class="text-gray-500">Memory:</dt>
+                <dd class="text-gray-900">{{ config.slurm.mem }}</dd>
+
+                <dt class="text-gray-500">Time Limit:</dt>
+                <dd class="text-gray-900">{{ config.slurm.time_limit }}</dd>
+            </dl>
+        </div>
+
+        <!-- Submit -->
+        <div class="flex justify-end gap-3">
+            <a href="/"
+               class="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
+                Cancel
+            </a>
+            <button type="submit"
+                    class="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors">
+                Submit Transfer Job
+            </button>
+        </div>
+    </form>
+</div>
+{% endblock %}

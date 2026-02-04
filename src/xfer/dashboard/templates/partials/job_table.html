@@ -1,0 +1,90 @@
+{% if jobs %}
+<div class="bg-white rounded-lg shadow overflow-hidden">
+    <table class="min-w-full divide-y divide-gray-200">
+        <thead class="bg-gray-50">
+            <tr>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Job</th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Progress</th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Source</th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Destination</th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
+            </tr>
+        </thead>
+        <tbody class="bg-white divide-y divide-gray-200">
+            {% for job in jobs %}
+            <tr class="hover:bg-gray-50 cursor-pointer" onclick="window.location='/jobs/{{ job.id }}'">
+                <td class="px-6 py-4 whitespace-nowrap">
+                    <div class="text-sm font-medium text-indigo-600">{{ job.job_name }}</div>
+                    <div class="text-xs text-gray-500">ID: {{ job.id }}</div>
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap">
+                    {% set status_colors = {
+                        'pending': 'bg-gray-100 text-gray-800',
+                        'manifest_queued': 'bg-yellow-100 text-yellow-800',
+                        'manifest_running': 'bg-blue-100 text-blue-800',
+                        'manifest_failed': 'bg-red-100 text-red-800',
+                        'manifest_done': 'bg-green-100 text-green-800',
+                        'transfer_queued': 'bg-yellow-100 text-yellow-800',
+                        'transfer_running': 'bg-blue-100 text-blue-800',
+                        'completed': 'bg-green-100 text-green-800',
+                        'failed': 'bg-red-100 text-red-800',
+                        'cancelled': 'bg-gray-100 text-gray-800'
+                    } %}
+                    <span class="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full {{ status_colors.get(job.status, 'bg-gray-100 text-gray-800') }}">
+                        {{ job.status.replace('_', ' ').title() }}
+                    </span>
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap">
+                    {% if job.num_shards %}
+                    <div class="flex items-center">
+                        <div class="w-24 bg-gray-200 rounded-full h-2 mr-2">
+                            {% set pct = (job.shards_done / job.num_shards * 100) if job.num_shards else 0 %}
+                            {% set fail_pct = (job.shards_failed / job.num_shards * 100) if job.num_shards else 0 %}
+                            <div class="flex h-2 rounded-full overflow-hidden">
+                                <div class="bg-green-500" style="width: {{ pct }}%"></div>
+                                <div class="bg-red-500" style="width: {{ fail_pct }}%"></div>
+                            </div>
+                        </div>
+                        <span class="text-xs text-gray-500">{{ job.shards_done }}/{{ job.num_shards }}</span>
+                    </div>
+                    {% else %}
+                    <span class="text-xs text-gray-400">-</span>
+                    {% endif %}
+                </td>
+                <td class="px-6 py-4">
+                    <div class="text-sm text-gray-900 truncate max-w-xs" title="{{ job.source_path }}">
+                        {{ job.source_path }}
+                    </div>
+                </td>
+                <td class="px-6 py-4">
+                    <div class="text-sm text-gray-900 truncate max-w-xs" title="{{ job.dest_path }}">
+                        {{ job.dest_path }}
+                    </div>
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {{ job.created_at.strftime('%Y-%m-%d %H:%M') if job.created_at else '-' }}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="bg-white rounded-lg shadow p-8 text-center">
+    <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+    </svg>
+    <h3 class="mt-2 text-sm font-medium text-gray-900">No transfer jobs</h3>
+    <p class="mt-1 text-sm text-gray-500">Get started by creating a new transfer job.</p>
+    <div class="mt-6">
+        <a href="/jobs/new"
+           class="inline-flex items-center px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors">
+            <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+            </svg>
+            New Transfer
+        </a>
+    </div>
+</div>
+{% endif %}
