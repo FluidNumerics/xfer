@@ -14,6 +14,7 @@ import anthropic
 from .config import BotConfig
 from .slurm_tools import (
     cancel_job,
+    check_path_exists,
     get_allowed_backends,
     get_job_status,
     get_jobs_by_thread,
@@ -179,6 +180,29 @@ This is helpful when users want to know "how much data is there?" or "how long w
             "required": ["source"],
         },
     },
+    {
+        "name": "check_path_exists",
+        "description": """Check if a bucket or path exists at a remote endpoint.
+
+Use this to verify that a source or destination path is accessible before starting a transfer.
+If the path doesn't exist, this will notify the support team so they can help resolve the issue.
+
+Common reasons for paths not existing:
+- Bucket name is misspelled
+- Bucket hasn't been created yet
+- Credentials don't have access to the bucket
+- Wrong endpoint/region configured""",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Path to check in rclone format (remote:bucket/path)",
+                },
+            },
+            "required": ["path"],
+        },
+    },
 ]
 
 SYSTEM_PROMPT = """You are a helpful data transfer assistant for an HPC cluster. You help researchers submit and monitor data transfer jobs via Slurm.
@@ -190,6 +214,7 @@ Your capabilities:
 - Cancel jobs if requested
 - Request access to new backends on behalf of users
 - Scan source paths to get file statistics and transfer estimates
+- Verify that buckets/paths exist before starting transfers
 
 Guidelines:
 1. Always validate that backends are allowed before submitting transfers
@@ -403,6 +428,79 @@ class ClaudeAgent:
             if stats.error:
                 result["error"] = stats.error
             return json.dumps(result)
+
+        elif tool_name == "check_path_exists":
+            path = tool_input["path"]
+            check_result = check_path_exists(path, self.config)
+
+            # If path doesn't exist, notify support channel
+            support_notified = False
+            if not check_result.exists and self.slack_client and self.config.support_channel:
+                try:
+                    self.slack_client.chat_postMessage(
+                        channel=self.config.support_channel,
+                        text=f"Path access issue: {path}",
+                        blocks=[
+                            {
+                                "type": "header",
+                                "text": {
+                                    "type": "plain_text",
+                                    "text": "Path Access Issue",
+                                },
+                            },
+                            {
+                                "type": "section",
+                                "fields": [
+                                    {
+                                        "type": "mrkdwn",
+                                        "text": f"*Path:*\n`{path}`",
+                                    },
+                                    {
+                                        "type": "mrkdwn",
+                                        "text": f"*Error:*\n{check_result.error or 'Unknown'}",
+                                    },
+                                ],
+                            },
+                            {
+                                "type": "section",
+                                "text": {
+                                    "type": "mrkdwn",
+                                    "text": f"*Details:*\n```{check_result.details[:500] if check_result.details else 'No details'}```",
+                                },
+                            },
+                            {
+                                "type": "context",
+                                "elements": [
+                                    {
+                                        "type": "mrkdwn",
+                                        "text": f"<https://slack.com/archives/{channel_id}/p{thread_ts.replace('.', '')}|View original thread>",
+                                    }
+                                ],
+                            },
+                        ],
+                    )
+                    support_notified = True
+                except Exception as e:
+                    import logging
+
+                    logging.getLogger(__name__).error(
+                        f"Failed to post to support channel: {e}"
+                    )
+
+            return json.dumps(
+                {
+                    "path": check_result.path,
+                    "exists": check_result.exists,
+                    "error": check_result.error,
+                    "support_notified": support_notified,
+                    "message": (
+                        f"Path '{path}' is accessible."
+                        if check_result.exists
+                        else f"Path '{path}' is not accessible: {check_result.error}. "
+                        + ("Support team has been notified." if support_notified else "")
+                    ),
+                }
+            )
 
         else:
             return json.dumps({"error": f"Unknown tool: {tool_name}"})

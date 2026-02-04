@@ -195,6 +195,9 @@ def _write_prepare_script(
     # User flags to append after analysis-suggested flags
     user_rclone_flags = rclone_flags or ""
 
+    # Get xfer install directory for uv
+    xfer_dir = config.xfer_install_dir or Path(__file__).parent.parent.parent.parent.resolve()
+
     script_content = f"""#!/usr/bin/env bash
 #SBATCH --job-name={job_name}-prepare
 #SBATCH --output={run_dir}/prepare-%j.out
@@ -209,13 +212,21 @@ def _write_prepare_script(
 
 set -euo pipefail
 
+# Setup uv environment
+XFER_DIR="{xfer_dir}"
+echo "=== Setting up uv environment at $(date -Is) ==="
+echo "XFER_DIR: $XFER_DIR"
+cd "$XFER_DIR"
+uv sync
+echo "=== uv sync complete ==="
+
 echo "=== Starting manifest build at $(date -Is) ==="
 echo "Source: {source}"
 echo "Dest: {dest}"
 echo "Run dir: {run_dir}"
 
 # Phase 1: Build manifest
-xfer manifest build \\
+uv run xfer manifest build \\
     --source {shlex.quote(source)} \\
     --dest {shlex.quote(dest)} \\
     --out {run_dir}/manifest.jsonl \\
@@ -226,7 +237,7 @@ echo "=== Manifest build complete at $(date -Is) ==="
 
 # Phase 2: Analyze manifest to determine optimal rclone flags
 echo "=== Analyzing file size distribution ==="
-xfer manifest analyze \\
+uv run xfer manifest analyze \\
     --in {run_dir}/manifest.jsonl \\
     --out {run_dir}/analysis.json
 
@@ -247,7 +258,7 @@ echo "Final rclone flags: $RCLONE_FLAGS"
 echo "=== Analysis complete at $(date -Is) ==="
 
 # Phase 3: Shard manifest
-xfer manifest shard \\
+uv run xfer manifest shard \\
     --in {run_dir}/manifest.jsonl \\
     --outdir {run_dir}/shards \\
     --num-shards {num_shards}
@@ -255,7 +266,7 @@ xfer manifest shard \\
 echo "=== Sharding complete at $(date -Is) ==="
 
 # Phase 4: Render Slurm scripts
-xfer slurm render \\
+uv run xfer slurm render \\
     --run-dir {run_dir} \\
     --num-shards {num_shards} \\
     --array-concurrency {array_concurrency} \\
@@ -273,7 +284,7 @@ xfer slurm render \\
 echo "=== Render complete at $(date -Is) ==="
 
 # Phase 5: Submit transfer array job
-xfer slurm submit --run-dir {run_dir}
+uv run xfer slurm submit --run-dir {run_dir}
 
 echo "=== Transfer job submitted at $(date -Is) ==="
 """
@@ -779,3 +790,99 @@ def get_source_stats(source: str, config: BotConfig) -> SourceStats:
         histogram_text=histogram_text,
         error=None,
     )
+
+
+@dataclass
+class PathCheckResult:
+    """Result of checking if a path exists."""
+
+    path: str
+    exists: bool
+    error: Optional[str] = None
+    details: Optional[str] = None
+
+
+def check_path_exists(path: str, config: BotConfig) -> PathCheckResult:
+    """
+    Check if a bucket/path exists at a remote endpoint.
+
+    Uses rclone lsf with --max-depth 0 to check if the path is accessible.
+    """
+    # Validate backend first
+    valid, msg = validate_backend(path, config)
+    if not valid:
+        return PathCheckResult(
+            path=path,
+            exists=False,
+            error=msg,
+            details="Backend not in allowed list",
+        )
+
+    # Build rclone lsf command to check if path exists
+    # Using lsf with --max-depth 0 and --dirs-only is a quick way to check
+    rclone_cmd = [
+        "rclone",
+        "lsf",
+        path,
+        "--max-depth",
+        "0",
+        "--config",
+        config.rclone.container_conf_path,
+    ]
+
+    # Build srun command with container
+    mounts = f"{config.rclone.config_path}:{config.rclone.container_conf_path}:ro"
+
+    srun_cmd = [
+        "srun",
+        "-n",
+        "1",
+        "-c",
+        "2",
+        "--container-image",
+        config.rclone.image,
+        "--container-mounts",
+        mounts,
+        "--no-container-remap-root",
+    ] + rclone_cmd
+
+    try:
+        result = run_cmd(srun_cmd, capture=True, check=True)
+        # If command succeeded, path exists
+        return PathCheckResult(
+            path=path,
+            exists=True,
+            details="Path is accessible",
+        )
+    except subprocess.CalledProcessError as e:
+        error_output = e.stderr or str(e)
+
+        # Check for common error patterns
+        if "NoSuchBucket" in error_output or "bucket does not exist" in error_output.lower():
+            return PathCheckResult(
+                path=path,
+                exists=False,
+                error="Bucket does not exist",
+                details=error_output,
+            )
+        elif "AccessDenied" in error_output or "access denied" in error_output.lower():
+            return PathCheckResult(
+                path=path,
+                exists=False,
+                error="Access denied - credentials may not have permission",
+                details=error_output,
+            )
+        elif "NoSuchKey" in error_output or "not found" in error_output.lower():
+            return PathCheckResult(
+                path=path,
+                exists=False,
+                error="Path does not exist within the bucket",
+                details=error_output,
+            )
+        else:
+            return PathCheckResult(
+                path=path,
+                exists=False,
+                error=f"Failed to access path: {error_output[:200]}",
+                details=error_output,
+            )

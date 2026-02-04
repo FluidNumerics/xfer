@@ -66,6 +66,9 @@ class BotConfig:
     allowed_backends_file: Optional[Path] = (
         None  # Path to YAML/JSON listing allowed backends
     )
+    xfer_install_dir: Optional[Path] = field(
+        default_factory=lambda: Path(__file__).parent.parent.parent.parent.resolve()
+    )  # Path to xfer git repo for uv sync
 
     # Defaults
     slurm: SlurmDefaults = field(default_factory=SlurmDefaults)
@@ -99,6 +102,9 @@ class BotConfig:
 
         if rclone_config := os.environ.get("XFER_RCLONE_CONFIG"):
             config.rclone.config_path = Path(rclone_config)
+
+        if xfer_install_dir := os.environ.get("XFER_INSTALL_DIR"):
+            config.xfer_install_dir = Path(xfer_install_dir)
 
         return config
 
