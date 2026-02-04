@@ -1,0 +1,41 @@
+# Allowed rclone backends for xfer-slackbot
+#
+# This file defines which rclone remotes users can transfer to/from.
+# Set XFER_ALLOWED_BACKENDS_FILE to point to this file.
+#
+# If this file is not configured, the bot will parse rclone.conf
+# and allow all configured remotes.
+
+allowed_backends:
+  # AWS S3 buckets
+  - s3src        # Source S3 (e.g., research data intake)
+  - s3dst        # Destination S3 (e.g., archive)
+  - s3scratch    # Scratch/temporary storage
+
+  # Google Cloud Storage
+  - gcs-research
+  - gcs-archive
+
+  # Azure Blob Storage
+  - azure-hot
+  - azure-archive
+
+  # On-prem / Other
+  - nfs-home     # NFS mounted as rclone local
+  - ceph-rgw     # Ceph RadosGW S3-compatible
+
+# Backends NOT in this list will be rejected.
+# Users can request access via the bot, which posts to the support channel.
+#
+# Example rclone.conf entries for these backends:
+#
+# [s3src]
+# type = s3
+# provider = AWS
+# env_auth = true
+# region = us-east-1
+#
+# [gcs-research]
+# type = google cloud storage
+# project_number = 123456789
+# service_account_file = /etc/xfer/gcs-sa.json

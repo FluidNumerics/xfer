@@ -742,6 +742,9 @@ def run_all(
     cpus_per_task: int = typer.Option(4, min=1, help="cpus-per-task"),
     mem: str = typer.Option("8G", help="Slurm mem"),
     max_attempts: int = typer.Option(5, min=1, help="Worker retry attempts"),
+    sbatch_extras: str = typer.Option(
+        "", help="Extra SBATCH lines, e.g. '#SBATCH --account=foo\\n#SBATCH --qos=bar'"
+    ),
     submit: bool = typer.Option(False, help="If set, submit job after rendering"),
     pyxis_extra: str = typer.Option("", help="Extra pyxis flags"),
 ) -> None:
@@ -781,6 +784,7 @@ def run_all(
         source_root=source,
         dest_root=dest,
         max_attempts=max_attempts,
+        sbatch_extras=sbatch_extras,
         pyxis_extra=pyxis_extra,
     )
     if submit:

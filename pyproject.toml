@@ -9,8 +9,16 @@ dependencies = [
   "rich>=13.7.1",
 ]
 
+[project.optional-dependencies]
+slackbot = [
+  "slack-bolt>=1.18.0",
+  "anthropic>=0.39.0",
+  "pyyaml>=6.0",
+]
+
 [project.scripts]
 xfer = "xfer.cli:main"
+xfer-slackbot = "xfer.slackbot.app:main"
 
 [build-system]
 requires = ["hatchling>=1.25.0"]
