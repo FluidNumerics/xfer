@@ -25,6 +25,7 @@ Typical usage
 
   python xfer.py slurm submit --run-dir run
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -74,7 +75,13 @@ def write_text(path: Path, content: str, mode: int = 0o755) -> None:
         pass
 
 
-def run_cmd(cmd: List[str], *, check: bool = True, capture: bool = False, env: Optional[Dict[str, str]] = None) -> subprocess.CompletedProcess:
+def run_cmd(
+    cmd: List[str],
+    *,
+    check: bool = True,
+    capture: bool = False,
+    env: Optional[Dict[str, str]] = None,
+) -> subprocess.CompletedProcess:
     eprint(">", " ".join(shlex.quote(c) for c in cmd))
     return subprocess.run(
         cmd,
@@ -86,7 +93,9 @@ def run_cmd(cmd: List[str], *, check: bool = True, capture: bool = False, env: O
     )
 
 
-def default_mounts_for_rclone_config(rclone_config: Path, container_conf_path: str) -> List[str]:
+def default_mounts_for_rclone_config(
+    rclone_config: Path, container_conf_path: str
+) -> List[str]:
     """
     Returns pyxis mounts for rclone config.
     Example: /home/user/.config/rclone/rclone.conf:/etc/rclone/rclone.conf:ro
@@ -101,7 +110,8 @@ def pyxis_container_args(
     extra: Optional[List[str]] = None,
 ) -> List[str]:
     args = [
-        "--container-image", image,
+        "--container-image",
+        image,
     ]
     for m in mounts:
         args += ["--container-mounts", m]  # pyxis expects repeated flag
@@ -112,7 +122,9 @@ def pyxis_container_args(
     return args
 
 
-def rclone_env_args(container_conf_path: str, extra_env: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+def rclone_env_args(
+    container_conf_path: str, extra_env: Optional[Dict[str, str]] = None
+) -> Dict[str, str]:
     env = dict(os.environ)
     env["RCLONE_CONFIG"] = container_conf_path
     if extra_env:
@@ -142,7 +154,9 @@ def parse_lsjson_items(lsjson: str) -> Iterable[Dict[str, Any]]:
         yield item
 
 
-def greedy_binpack_by_bytes(items: List[Tuple[int, int]], n_bins: int) -> List[List[int]]:
+def greedy_binpack_by_bytes(
+    items: List[Tuple[int, int]], n_bins: int
+) -> List[List[int]]:
     """
     items: list of (index, size_bytes)
     Returns bins: list of lists of indices
@@ -164,19 +178,41 @@ def greedy_binpack_by_bytes(items: List[Tuple[int, int]], n_bins: int) -> List[L
 # -----------------------------
 @manifest_app.command("build")
 def manifest_build(
-    source: str = typer.Option(..., help="rclone source root, e.g. s3src:bucket/prefix"),
+    source: str = typer.Option(
+        ..., help="rclone source root, e.g. s3src:bucket/prefix"
+    ),
     dest: str = typer.Option(..., help="rclone dest root, e.g. s3dst:bucket/prefix"),
-    out: Path = typer.Option(..., help="Output manifest JSONL path",resolve_path=True),
+    out: Path = typer.Option(..., help="Output manifest JSONL path", resolve_path=True),
     rclone_image: str = typer.Option(..., help="Container image containing rclone"),
-    rclone_config: Path = typer.Option(..., exists=True, dir_okay=False, help="Local path to rclone.conf",resolve_path=True),
-    container_conf_path: str = typer.Option("/etc/rclone/rclone.conf", help="Path inside container for rclone.conf"),
+    rclone_config: Path = typer.Option(
+        ...,
+        exists=True,
+        dir_okay=False,
+        help="Local path to rclone.conf",
+        resolve_path=True,
+    ),
+    container_conf_path: str = typer.Option(
+        "/etc/rclone/rclone.conf", help="Path inside container for rclone.conf"
+    ),
     recursive: bool = typer.Option(True, help="List recursively"),
     # rclone lsjson options
     fast_list: bool = typer.Option(True, help="Use --fast-list for listing"),
-    no_modtime: bool = typer.Option(False, help="Use --no-modtime if server modtime is unreliable"),
-    extra_lsjson_flags: str = typer.Option("", help="Extra flags for `rclone lsjson` (string passed as-is)"),
-    pyxis_extra: str = typer.Option("", help="Extra pyxis flags for srun (string passed as-is)"),
-    run_id: Optional[str] = typer.Option(None, help="Run identifier; default is generated"),
+    no_modtime: bool = typer.Option(
+        False, help="Use --no-modtime if server modtime is unreliable"
+    ),
+    extra_lsjson_flags: str = typer.Option(
+        "", help="Extra flags for `rclone lsjson` (string passed as-is)"
+    ),
+    pyxis_extra: str = typer.Option(
+        "", help="Extra pyxis flags for srun (string passed as-is)"
+    ),
+    run_id: Optional[str] = typer.Option(
+        None, help="Run identifier; default is generated"
+    ),
+    v: bool = typer.Option(False, "-v", help="Pass -v to rclone for verbose output"),
+    vv: bool = typer.Option(
+        False, "-vv", help="Pass -vv to rclone for very verbose output"
+    ),
 ) -> None:
     """
     Build manifest.jsonl by running containerized `rclone lsjson` against SOURCE.
@@ -185,11 +221,20 @@ def manifest_build(
     run_id = run_id or now_run_id()
     mkdirp(out.parent)
 
+    # Ensure error directory exists
+    err_dir = Path(out.parent.parent) / "xfer-err"
+    mkdirp(err_dir)
+
     mounts = default_mounts_for_rclone_config(rclone_config, container_conf_path)
 
     # We run rclone inside a one-task srun, so the tooling works in allocated environments
     # and inherits Slurm settings (modules, env, etc).
     rclone_cmd = ["rclone", "lsjson", source]
+    # Handle verbosity flags
+    if vv:
+        rclone_cmd.append("-vv")
+    elif v:
+        rclone_cmd.append("-v")
     if recursive:
         rclone_cmd.append("--recursive")
     if fast_list:
@@ -210,7 +255,25 @@ def manifest_build(
     )
     srun_cmd += rclone_cmd
 
-    cp = run_cmd(srun_cmd, capture=True, check=True, env=rclone_env_args(container_conf_path))
+    try:
+        cp = run_cmd(
+            srun_cmd, capture=True, check=True, env=rclone_env_args(container_conf_path)
+        )
+    except Exception as exc:
+        # Write error details to xfer-err/
+        err_file = err_dir / f"manifest_build-{run_id}.log"
+        with err_file.open("w", encoding="utf-8") as ef:
+            ef.write(f"Exception: {exc}\n")
+            import traceback
+
+            ef.write(traceback.format_exc())
+        # If subprocess.CalledProcessError, try to write stderr
+        if hasattr(exc, "stderr") and exc.stderr:
+            with err_file.open("a", encoding="utf-8") as ef:
+                ef.write("\n--- STDERR ---\n")
+                ef.write(str(exc.stderr))
+        eprint(f"ERROR: srun/rclone failed, see {err_file}")
+        raise
 
     # Build JSONL
     n = 0
@@ -231,8 +294,12 @@ def manifest_build(
             mtime = item.get("ModTime")  # ISO-ish string if present
             hashes = item.get("Hashes") if isinstance(item.get("Hashes"), dict) else {}
             etag = item.get("ETag") or item.get("etag")  # sometimes present
-            storage_class = item.get("StorageClass") or item.get("StorageClass")  # may be absent
-            meta = item.get("Metadata") if isinstance(item.get("Metadata"), dict) else {}
+            storage_class = item.get("StorageClass") or item.get(
+                "StorageClass"
+            )  # may be absent
+            meta = (
+                item.get("Metadata") if isinstance(item.get("Metadata"), dict) else {}
+            )
 
             rec = {
                 "schema": SCHEMA,
@@ -257,8 +324,15 @@ def manifest_build(
 
 @manifest_app.command("shard")
 def manifest_shard(
-    infile: Path = typer.Option(..., "--in", exists=True, dir_okay=False, help="Input manifest JSONL",resolve_path=True),
-    outdir: Path = typer.Option(..., help="Output shard directory",resolve_path=True),
+    infile: Path = typer.Option(
+        ...,
+        "--in",
+        exists=True,
+        dir_okay=False,
+        help="Input manifest JSONL",
+        resolve_path=True,
+    ),
+    outdir: Path = typer.Option(..., help="Output shard directory", resolve_path=True),
     num_shards: int = typer.Option(..., min=1, help="Number of shards"),
     strategy: str = typer.Option("bytes", help="Sharding strategy: bytes|count|hash"),
 ) -> None:
@@ -318,7 +392,9 @@ def manifest_shard(
         "bytes_total": total_bytes,
         "created_at": dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
     }
-    (outdir / "shards.meta.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+    (outdir / "shards.meta.json").write_text(
+        json.dumps(meta, indent=2) + "\n", encoding="utf-8"
+    )
     eprint(f"Wrote {num_shards} shards to {outdir} (records={n}, bytes={total_bytes})")
 
 
@@ -337,8 +413,6 @@ set -euo pipefail
 # Optional env:
 #   RCLONE_CONF_IN_CONTAINER (default /etc/rclone/rclone.conf)
 #   RCLONE_FLAGS
-#   RCLONE_SOURCE_OPTS
-#   RCLONE_DEST_OPTS
 #   MAX_ATTEMPTS (default 5)
 #   PYXIS_EXTRA (extra flags for pyxis, optional)
 
@@ -350,8 +424,6 @@ set -euo pipefail
 
 RCLONE_CONF_IN_CONTAINER="${RCLONE_CONF_IN_CONTAINER:-/etc/rclone/rclone.conf}"
 RCLONE_FLAGS="${RCLONE_FLAGS:-}"
-RCLONE_SOURCE_OPTS="${RCLONE_SOURCE_OPTS:-}"
-RCLONE_DEST_OPTS="${RCLONE_DEST_OPTS:-}"
 MAX_ATTEMPTS="${MAX_ATTEMPTS:-5}"
 PYXIS_EXTRA="${PYXIS_EXTRA:-}"
 
@@ -413,8 +485,6 @@ srun -N1 -n1 \
   rclone copy \
    --config "${RCLONE_CONF_IN_CONTAINER}" \
     ${RCLONE_FLAGS} \
-    ${RCLONE_SOURCE_OPTS} \
-    ${RCLONE_DEST_OPTS} \
     --files-from "${FILES_FROM}" \
     "${XFER_SOURCE_ROOT}" \
     "${XFER_DEST_ROOT}"
@@ -472,8 +542,6 @@ export RCLONE_CONFIG_HOST="{rclone_config_host}"
 export RCLONE_CONF_IN_CONTAINER="{rclone_conf_in_container}"
 
 export RCLONE_FLAGS={rclone_flags}
-export RCLONE_SOURCE_OPTS={rclone_source_opts}
-export RCLONE_DEST_OPTS={rclone_dest_opts}
 export MAX_ATTEMPTS="{max_attempts}"
 export PYXIS_EXTRA={pyxis_extra}
 
@@ -483,7 +551,9 @@ bash "{run_dir}/worker.sh"
 
 @slurm_app.command("render")
 def slurm_render(
-    run_dir: Path = typer.Option(..., help="Run directory containing shards/",resolve_path=True),
+    run_dir: Path = typer.Option(
+        ..., help="Run directory containing shards/", resolve_path=True
+    ),
     num_shards: int = typer.Option(..., min=1, help="Number of shards (array size)"),
     array_concurrency: int = typer.Option(64, min=1, help="Max concurrent array tasks"),
     job_name: str = typer.Option("xfer", help="Slurm job name"),
@@ -493,18 +563,37 @@ def slurm_render(
     mem: str = typer.Option("8G", help="Slurm --mem"),
     # rclone container config
     rclone_image: str = typer.Option(..., help="Container image containing rclone"),
-    rclone_config: Path = typer.Option(..., exists=True, dir_okay=False, help="Host path to rclone.conf",resolve_path=True),
-    rclone_conf_in_container: str = typer.Option("/etc/rclone/rclone.conf", help="Path inside container"),
+    rclone_config: Path = typer.Option(
+        ...,
+        exists=True,
+        dir_okay=False,
+        help="Host path to rclone.conf",
+        resolve_path=True,
+    ),
+    rclone_conf_in_container: str = typer.Option(
+        "/etc/rclone/rclone.conf", help="Path inside container"
+    ),
     # these are passed as shell words (quote them properly in CLI)
-    rclone_flags: str = typer.Option("--transfers 32 --checkers 64 --fast-list --retries 10 --low-level-retries 20", help="rclone copy flags"),
-    rclone_source_opts: str = typer.Option("", help="Extra rclone opts for source (e.g. --s3-endpoint ...)"),
-    rclone_dest_opts: str = typer.Option("", help="Extra rclone opts for dest (e.g. --s3-endpoint ...)"),
-    # required roots (saved during manifest build, but we’ll read from manifest if present)
-    source_root: Optional[str] = typer.Option(None, help="Source root (rclone remote:path). If omitted, read from manifest."),
-    dest_root: Optional[str] = typer.Option(None, help="Dest root (rclone remote:path). If omitted, read from manifest."),
-    max_attempts: int = typer.Option(5, min=1, help="Worker max attempts (requeue retries)"),
-    sbatch_extras: str = typer.Option("", help="Extra SBATCH lines, e.g. '#SBATCH --account=foo\\n#SBATCH --qos=bar'"),
-    pyxis_extra: str = typer.Option("", help="Extra pyxis flags (string placed after --container-mounts...)"),
+    rclone_flags: str = typer.Option(
+        "--transfers 32 --checkers 64 --fast-list --retries 10 --low-level-retries 20",
+        help="rclone copy flags",
+    ),
+    # required roots (saved during manifest build, but we'll read from manifest if present)
+    source_root: Optional[str] = typer.Option(
+        None, help="Source root (rclone remote:path). If omitted, read from manifest."
+    ),
+    dest_root: Optional[str] = typer.Option(
+        None, help="Dest root (rclone remote:path). If omitted, read from manifest."
+    ),
+    max_attempts: int = typer.Option(
+        5, min=1, help="Worker max attempts (requeue retries)"
+    ),
+    sbatch_extras: str = typer.Option(
+        "", help="Extra SBATCH lines, e.g. '#SBATCH --account=foo\\n#SBATCH --qos=bar'"
+    ),
+    pyxis_extra: str = typer.Option(
+        "", help="Extra pyxis flags (string placed after --container-mounts...)"
+    ),
 ) -> None:
     """
     Render worker.sh, sbatch_array.sh, and submit.sh under run_dir.
@@ -527,7 +616,9 @@ def slurm_render(
                 dest_root = dest_root or first.get("dest_root")
 
     if not source_root or not dest_root:
-        raise typer.BadParameter("source_root/dest_root not set and could not be read from run_dir/manifest.jsonl")
+        raise typer.BadParameter(
+            "source_root/dest_root not set and could not be read from run_dir/manifest.jsonl"
+        )
 
     # Write scripts
     write_text(run_dir / "worker.sh", WORKER_SH, mode=0o755)
@@ -539,7 +630,11 @@ def slurm_render(
         # Return a safe shell fragment. If empty, return '""' (so env var is defined).
         if not s.strip():
             return '""'
-        return shlex.quote(s) if any(ch in s for ch in ['"', "'", " ", "\t", "\n", "$", "`", "\\"]) else s
+        return (
+            shlex.quote(s)
+            if any(ch in s for ch in ['"', "'", " ", "\t", "\n", "$", "`", "\\"])
+            else s
+        )
 
     extras = sbatch_extras.rstrip()
     extras = extras if extras else ""
@@ -560,8 +655,6 @@ def slurm_render(
         rclone_config_host=str(rclone_config),
         rclone_conf_in_container=rclone_conf_in_container,
         rclone_flags=shell_words(rclone_flags),
-        rclone_source_opts=shell_words(rclone_source_opts),
-        rclone_dest_opts=shell_words(rclone_dest_opts),
         max_attempts=max_attempts,
         pyxis_extra=shell_words(pyxis_extra),
     )
@@ -584,21 +677,23 @@ def slurm_render(
         "rclone_config_host": str(rclone_config),
         "rclone_conf_in_container": rclone_conf_in_container,
         "rclone_flags": rclone_flags,
-        "rclone_source_opts": rclone_source_opts,
-        "rclone_dest_opts": rclone_dest_opts,
         "max_attempts": max_attempts,
         "sbatch_extras": sbatch_extras,
         "pyxis_extra": pyxis_extra,
         "created_at": dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
     }
-    (run_dir / "config.resolved.json").write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
+    (run_dir / "config.resolved.json").write_text(
+        json.dumps(cfg, indent=2) + "\n", encoding="utf-8"
+    )
 
     eprint(f"Rendered scripts in {run_dir}: worker.sh, sbatch_array.sh, submit.sh")
 
 
 @slurm_app.command("submit")
 def slurm_submit(
-    run_dir: Path = typer.Option(..., help="Run directory containing sbatch_array.sh",resolve_path=True),
+    run_dir: Path = typer.Option(
+        ..., help="Run directory containing sbatch_array.sh", resolve_path=True
+    ),
 ) -> None:
     """
     Submit the rendered Slurm array job (sbatch).
@@ -615,20 +710,31 @@ def slurm_submit(
 # -----------------------------
 @app.command("run")
 def run_all(
-    run_dir: Path = typer.Option(Path("run"), help="Run directory (will be created)",resolve_path=True),
+    run_dir: Path = typer.Option(
+        Path("run"), help="Run directory (will be created)", resolve_path=True
+    ),
     source: str = typer.Option(..., help="Source root (rclone remote:path)"),
     dest: str = typer.Option(..., help="Dest root (rclone remote:path)"),
     num_shards: int = typer.Option(256, min=1, help="Number of shards"),
     array_concurrency: int = typer.Option(64, min=1, help="Max concurrent array tasks"),
     # container + config
     rclone_image: str = typer.Option(..., help="Container image containing rclone"),
-    rclone_config: Path = typer.Option(..., exists=True, dir_okay=False, help="Host path to rclone.conf",resolve_path=True),
-    container_conf_path: str = typer.Option("/etc/rclone/rclone.conf", help="Path inside container for rclone.conf"),
+    rclone_config: Path = typer.Option(
+        ...,
+        exists=True,
+        dir_okay=False,
+        help="Host path to rclone.conf",
+        resolve_path=True,
+    ),
+    container_conf_path: str = typer.Option(
+        "/etc/rclone/rclone.conf", help="Path inside container for rclone.conf"
+    ),
     # listing + copy knobs
     extra_lsjson_flags: str = typer.Option("", help="Extra flags for lsjson"),
-    rclone_flags: str = typer.Option("--transfers 32 --checkers 64 --fast-list --retries 10 --low-level-retries 20", help="rclone copy flags"),
-    rclone_source_opts: str = typer.Option("", help="Extra rclone opts for source"),
-    rclone_dest_opts: str = typer.Option("", help="Extra rclone opts for dest"),
+    rclone_flags: str = typer.Option(
+        "--transfers 32 --checkers 64 --fast-list --retries 10 --low-level-retries 20",
+        help="rclone copy flags",
+    ),
     # slurm knobs
     job_name: str = typer.Option("xfer", help="Slurm job name"),
     time_limit: str = typer.Option("24:00:00", help="Slurm time limit"),
@@ -656,7 +762,9 @@ def run_all(
         extra_lsjson_flags=extra_lsjson_flags,
         pyxis_extra=pyxis_extra,
     )
-    manifest_shard(infile=manifest_path, outdir=shards_dir, num_shards=num_shards, strategy="bytes")
+    manifest_shard(
+        infile=manifest_path, outdir=shards_dir, num_shards=num_shards, strategy="bytes"
+    )
     slurm_render(
         run_dir=run_dir,
         num_shards=num_shards,
@@ -670,8 +778,6 @@ def run_all(
         rclone_config=rclone_config,
         rclone_conf_in_container=container_conf_path,
         rclone_flags=rclone_flags,
-        rclone_source_opts=rclone_source_opts,
-        rclone_dest_opts=rclone_dest_opts,
         source_root=source,
         dest_root=dest,
         max_attempts=max_attempts,
@@ -680,10 +786,10 @@ def run_all(
     if submit:
         slurm_submit(run_dir=run_dir)
 
+
 def main() -> None:
     app()
 
+
 if __name__ == "__main__":
     app()
-
-

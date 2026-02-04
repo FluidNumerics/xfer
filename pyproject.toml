@@ -26,3 +26,9 @@ target-version = "py310"
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
 
+[dependency-groups]
+dev = [
+    "black>=26.1.0",
+    "pre-commit>=4.5.1",
+]
+

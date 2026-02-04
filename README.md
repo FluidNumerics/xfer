@@ -1,4 +1,5 @@
-# xfer — Scalable S3↔S3 Transfers with rclone, Slurm, and pyxis
+# xfer
+Scalable S3↔S3 Transfers with rclone, Slurm, and pyxis
 
 ![Xfer source to destination](./graphics/xfer-workflow.png)
 
@@ -113,8 +114,6 @@ uv run xfer run \
   --array-concurrency 96 \
   --rclone-image rclone/rclone:latest \
   --rclone-config ~/.config/rclone/rclone.conf \
-  --rclone-source-opts "--s3-endpoint https://objects.source.example.com" \
-  --rclone-dest-opts   "--s3-endpoint https://objects.dest.example.com" \
   --rclone-flags "--transfers 48 --checkers 96 --fast-list --stats 30s" \
   --partition transfer \
   --cpus-per-task 4 \
@@ -195,9 +194,7 @@ uv run xfer slurm render \
   --cpus-per-task 4 \
   --mem 8G \
   --rclone-image rclone/rclone:latest \
-  --rclone-config ~/.config/rclone/rclone.conf \
-  --rclone-source-opts "--s3-endpoint https://objects.source.example.com" \
-  --rclone-dest-opts   "--s3-endpoint https://objects.dest.example.com"
+  --rclone-config ~/.config/rclone/rclone.conf
 ```
 
 ---
@@ -319,3 +316,12 @@ run/
 * **rclone handles object-level idempotency**
 * **Slurm handles node-level failures**
 * **xfer handles orchestration only**
+
+
+## Contributing
+* To enable pre-commit `black` formatting, run `uv run pre-commit install`
+  * If necessary, you can format locally with `uv run black .`
+* Name branches as either:
+  * `<your name>/<branch name>` (e.g., `alice/update-readme`)
+  * `<type of contribution>/<branch name>` (e.g., `feature/claude-integration`) (these are usually `feature`, `patch`, or `docs`)
+* Do NOT squash PRs into a single commit
