@@ -69,6 +69,10 @@ The source and destination should be in rclone format: "remote:bucket/path" (e.g
                     "type": "string",
                     "description": "Additional rclone flags to append to defaults (e.g., '--bwlimit 100M --checksum')",
                 },
+                "array_concurrency": {
+                    "type": "integer",
+                    "description": "Maximum concurrent Slurm array tasks (default: 64, max: 64). Lower this to reduce load on storage systems.",
+                },
             },
             "required": ["source", "dest"],
         },
@@ -267,6 +271,13 @@ class ClaudeAgent:
     ) -> str:
         """Execute a tool and return the result as a string."""
         if tool_name == "submit_transfer":
+            # Cap array_concurrency at 64 (the default maximum)
+            array_concurrency = tool_input.get("array_concurrency")
+            if array_concurrency is not None:
+                array_concurrency = min(int(array_concurrency), 64)
+                if array_concurrency < 1:
+                    array_concurrency = 1
+
             result = submit_transfer(
                 source=tool_input["source"],
                 dest=tool_input["dest"],
@@ -274,6 +285,7 @@ class ClaudeAgent:
                 channel_id=channel_id,
                 thread_ts=thread_ts,
                 num_shards=tool_input.get("num_shards"),
+                array_concurrency=array_concurrency,
                 time_limit=tool_input.get("time_limit"),
                 job_name=tool_input.get("job_name"),
                 rclone_flags=tool_input.get("rclone_flags"),
