@@ -634,7 +634,7 @@ set -euo pipefail
 : "${RUN_DIR:?}"
 cd "${RUN_DIR}"
 
-sbatch "${RUN_DIR}/sbatch_array.sh"
+sbatch --export=NONE "${RUN_DIR}/sbatch_array.sh"
 """
 
 SBATCH_ARRAY_SH = r"""#!/usr/bin/env bash
@@ -818,7 +818,7 @@ def slurm_submit(
     sbatch_script = run_dir / "sbatch_array.sh"
     if not sbatch_script.exists():
         raise typer.BadParameter(f"Missing {sbatch_script}. Run `slurm render` first.")
-    cp = run_cmd(["sbatch", str(sbatch_script)], capture=True, check=True)
+    cp = run_cmd(["sbatch", "--export=NONE", str(sbatch_script)], capture=True, check=True)
     print(cp.stdout.strip())
 
 
