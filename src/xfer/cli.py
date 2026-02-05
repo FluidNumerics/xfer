@@ -263,16 +263,41 @@ def manifest_build(
         # Write error details to xfer-err/
         err_file = err_dir / f"manifest_build-{run_id}.log"
         with err_file.open("w", encoding="utf-8") as ef:
-            ef.write(f"Exception: {exc}\n")
-            import traceback
+            ef.write(f"Exception: {exc}\n\n")
 
+            # Log the command that was run
+            ef.write("--- COMMAND ---\n")
+            ef.write(" ".join(shlex.quote(c) for c in srun_cmd) + "\n\n")
+
+            # Log relevant SLURM environment variables
+            ef.write("--- SLURM ENVIRONMENT ---\n")
+            slurm_vars = {k: v for k, v in os.environ.items() if k.startswith("SLURM")}
+            for k, v in sorted(slurm_vars.items()):
+                ef.write(f"{k}={v}\n")
+            ef.write("\n")
+
+            import traceback
+            ef.write("--- TRACEBACK ---\n")
             ef.write(traceback.format_exc())
-        # If subprocess.CalledProcessError, try to write stderr
+
+        # If subprocess.CalledProcessError, write stdout and stderr
         if hasattr(exc, "stderr") and exc.stderr:
             with err_file.open("a", encoding="utf-8") as ef:
                 ef.write("\n--- STDERR ---\n")
                 ef.write(str(exc.stderr))
+        if hasattr(exc, "stdout") and exc.stdout:
+            with err_file.open("a", encoding="utf-8") as ef:
+                ef.write("\n--- STDOUT ---\n")
+                ef.write(str(exc.stdout))
+
+        # Also print key info to stderr for visibility in job logs
         eprint(f"ERROR: srun/rclone failed, see {err_file}")
+        eprint(f"Command: {' '.join(shlex.quote(c) for c in srun_cmd)}")
+        if hasattr(exc, "stderr") and exc.stderr:
+            eprint(f"stderr: {exc.stderr}")
+        slurm_mem_vars = {k: v for k, v in os.environ.items() if "MEM" in k and k.startswith("SLURM")}
+        if slurm_mem_vars:
+            eprint(f"SLURM memory env vars: {slurm_mem_vars}")
         raise
 
     # Build JSONL
