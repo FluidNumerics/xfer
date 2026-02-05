@@ -212,6 +212,10 @@ def _write_prepare_script(
 
 set -euo pipefail
 
+# Unset conflicting Slurm memory variables to allow srun to work
+# (cluster DefMemPerCPU conflicts with job --mem setting)
+unset SLURM_MEM_PER_CPU SLURM_MEM_PER_GPU SLURM_MEM_PER_NODE
+
 # Setup uv environment
 XFER_DIR="{xfer_dir}"
 echo "=== Setting up uv environment at $(date -Is) ==="
