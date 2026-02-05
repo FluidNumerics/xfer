@@ -202,7 +202,7 @@ def _write_prepare_script(
 #SBATCH --job-name={job_name}-prepare
 #SBATCH --output={run_dir}/prepare-%j.out
 #SBATCH --error={run_dir}/prepare-%j.err
-#SBATCH --time=04:00:00
+#SBATCH --time=2-00:00:00
 #SBATCH --partition={config.slurm.partition}
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=16G
