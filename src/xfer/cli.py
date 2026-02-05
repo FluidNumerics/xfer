@@ -54,7 +54,8 @@ SCHEMA = "xfer.manifest.v1"
 # Helpers
 # -----------------------------
 def now_run_id() -> str:
-    ts = dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+    # Use filename-safe format (no colons)
+    ts = dt.datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
     rnd = os.urandom(3).hex()
     return f"{ts}_{rnd}"
 
