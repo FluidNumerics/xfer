@@ -22,6 +22,7 @@ from .slurm_tools import (
     get_source_stats,
     get_transfer_progress,
     get_transfer_progress_by_job,
+    list_buckets,
     submit_transfer,
 )
 
@@ -106,6 +107,28 @@ Use this to:
             "type": "object",
             "properties": {},
             "required": [],
+        },
+    },
+    {
+        "name": "list_buckets",
+        "description": """List buckets available at a specific backend/endpoint.
+
+Use this when users want to:
+- See what buckets exist at a storage endpoint
+- Browse available data sources before starting a transfer
+- Discover bucket names they can use in transfer paths
+
+This runs 'rclone lsd' to list top-level directories (buckets) at the remote.
+Note: The backend must be in the allowed list, and credentials must have ListBuckets permission.""",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "backend": {
+                    "type": "string",
+                    "description": "The backend name to list buckets for (e.g., 's3src', 'gcs')",
+                },
+            },
+            "required": ["backend"],
         },
     },
     {
@@ -248,6 +271,7 @@ Your capabilities:
 - Submit new data transfer jobs (source -> destination)
 - Check status of running/completed transfers
 - List available storage backends
+- List buckets available at each backend
 - Cancel jobs if requested
 - Request access to new backends on behalf of users
 - Scan source paths to get file statistics and transfer estimates
@@ -352,6 +376,16 @@ class ClaudeAgent:
         elif tool_name == "list_backends":
             backends = get_allowed_backends(self.config)
             return json.dumps({"allowed_backends": backends})
+
+        elif tool_name == "list_buckets":
+            backend = tool_input["backend"]
+            result = list_buckets(backend, self.config)
+            return json.dumps({
+                "backend": result.backend,
+                "buckets": result.buckets,
+                "bucket_count": len(result.buckets),
+                "error": result.error,
+            })
 
         elif tool_name == "cancel_job":
             success, message = cancel_job(

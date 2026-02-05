@@ -807,6 +807,15 @@ class PathCheckResult:
     details: Optional[str] = None
 
 
+@dataclass
+class BucketListResult:
+    """Result of listing buckets at an endpoint."""
+
+    backend: str
+    buckets: list[str]
+    error: Optional[str] = None
+
+
 def check_path_exists(path: str, config: BotConfig) -> PathCheckResult:
     """
     Check if a bucket/path exists at a remote endpoint.
@@ -890,6 +899,97 @@ def check_path_exists(path: str, config: BotConfig) -> PathCheckResult:
                 exists=False,
                 error=f"Failed to access path: {error_output[:200]}",
                 details=error_output,
+            )
+
+
+def list_buckets(backend: str, config: BotConfig) -> BucketListResult:
+    """
+    List buckets/top-level directories at a remote endpoint.
+
+    Uses rclone lsd to list directories at the root of the remote.
+
+    Args:
+        backend: The backend name (e.g., "s3src" or "gcs").
+                 Can include a trailing colon (e.g., "s3src:").
+
+    Returns:
+        BucketListResult with list of bucket names or an error.
+    """
+    # Normalize backend name - remove trailing colon if present
+    backend = backend.rstrip(":")
+
+    # Validate backend first
+    valid, msg = validate_backend(backend, config)
+    if not valid:
+        return BucketListResult(
+            backend=backend,
+            buckets=[],
+            error=msg,
+        )
+
+    # Build rclone lsd command to list buckets
+    # lsd lists directories, at root level these are buckets
+    rclone_cmd = [
+        "rclone",
+        "lsd",
+        f"{backend}:",
+        "--config",
+        config.rclone.container_conf_path,
+    ]
+
+    # Build srun command with container
+    mounts = f"{config.rclone.config_path}:{config.rclone.container_conf_path}:ro"
+
+    srun_cmd = [
+        "srun",
+        "-n",
+        "1",
+        "-c",
+        "2",
+        "--container-image",
+        config.rclone.image,
+        "--container-mounts",
+        mounts,
+        "--no-container-remap-root",
+    ] + rclone_cmd
+
+    try:
+        result = run_cmd(srun_cmd, capture=True, check=True)
+        # Parse rclone lsd output - format is:
+        # "          -1 2024-01-15 10:30:00        -1 bucket-name"
+        # We want the last column (bucket name)
+        buckets = []
+        for line in result.stdout.strip().splitlines():
+            parts = line.split()
+            if parts:
+                # Bucket name is the last field
+                buckets.append(parts[-1])
+
+        return BucketListResult(
+            backend=backend,
+            buckets=sorted(buckets),
+        )
+    except subprocess.CalledProcessError as e:
+        error_output = e.stderr or str(e)
+
+        # Check for common error patterns
+        if "AccessDenied" in error_output or "access denied" in error_output.lower():
+            return BucketListResult(
+                backend=backend,
+                buckets=[],
+                error="Access denied - credentials may not have ListBuckets permission",
+            )
+        elif "InvalidAccessKeyId" in error_output:
+            return BucketListResult(
+                backend=backend,
+                buckets=[],
+                error="Invalid access key - check credentials configuration",
+            )
+        else:
+            return BucketListResult(
+                backend=backend,
+                buckets=[],
+                error=f"Failed to list buckets: {error_output[:200]}",
             )
 
 
