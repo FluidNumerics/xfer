@@ -891,3 +891,145 @@ def check_path_exists(path: str, config: BotConfig) -> PathCheckResult:
                 error=f"Failed to access path: {error_output[:200]}",
                 details=error_output,
             )
+
+
+@dataclass
+class JobLogs:
+    """Logs and analysis data for a job."""
+
+    job_id: str
+    run_dir: Optional[str]
+    analysis: Optional[dict]  # Contents of analysis.json
+    log_tail: Optional[str]  # Last N lines of prepare job output
+    error_log_tail: Optional[str]  # Last N lines of prepare job stderr
+    rclone_commands: list[str]  # Extracted rclone commands from logs
+    error: Optional[str] = None
+
+
+def get_job_logs(
+    job_id: str,
+    channel_id: str,
+    thread_ts: str,
+    tail_lines: int = 50,
+) -> JobLogs:
+    """
+    Get logs and analysis data for a job.
+
+    Validates that the job belongs to the requesting thread.
+
+    Args:
+        job_id: The Slurm job ID (can be prepare job or array job)
+        channel_id: Slack channel ID for validation
+        thread_ts: Slack thread timestamp for validation
+        tail_lines: Number of lines to return from log files (default 50)
+
+    Returns:
+        JobLogs with analysis data and log contents
+    """
+    # Get job info
+    job_info = get_job_status(job_id)
+    if not job_info:
+        return JobLogs(
+            job_id=job_id,
+            run_dir=None,
+            analysis=None,
+            log_tail=None,
+            error_log_tail=None,
+            rclone_commands=[],
+            error=f"Job {job_id} not found",
+        )
+
+    # Validate job belongs to this thread
+    expected_comment = slack_comment(channel_id, thread_ts)
+    if expected_comment not in job_info.comment:
+        return JobLogs(
+            job_id=job_id,
+            run_dir=None,
+            analysis=None,
+            log_tail=None,
+            error_log_tail=None,
+            rclone_commands=[],
+            error=f"Job {job_id} does not belong to this thread",
+        )
+
+    if not job_info.work_dir:
+        return JobLogs(
+            job_id=job_id,
+            run_dir=None,
+            analysis=None,
+            log_tail=None,
+            error_log_tail=None,
+            rclone_commands=[],
+            error="Job has no working directory",
+        )
+
+    run_dir = Path(job_info.work_dir)
+    if not run_dir.exists():
+        return JobLogs(
+            job_id=job_id,
+            run_dir=str(run_dir),
+            analysis=None,
+            log_tail=None,
+            error_log_tail=None,
+            rclone_commands=[],
+            error=f"Run directory does not exist: {run_dir}",
+        )
+
+    # Read analysis.json if it exists
+    analysis = None
+    analysis_file = run_dir / "analysis.json"
+    if analysis_file.exists():
+        try:
+            analysis = json.loads(analysis_file.read_text())
+        except (json.JSONDecodeError, IOError) as e:
+            analysis = {"error": f"Failed to read analysis.json: {e}"}
+
+    # Find and read log files
+    # The prepare job ID might be different from the array job ID
+    # Look for any prepare-*.out files
+    log_tail = None
+    error_log_tail = None
+    rclone_commands = []
+
+    # Try to find prepare job logs
+    log_files = list(run_dir.glob("prepare-*.out"))
+    if log_files:
+        # Use the most recent one
+        log_file = sorted(log_files, key=lambda p: p.stat().st_mtime)[-1]
+        try:
+            lines = log_file.read_text().splitlines()
+            log_tail = "\n".join(lines[-tail_lines:]) if lines else ""
+
+            # Extract rclone commands from log
+            for line in lines:
+                # Look for lines that contain rclone commands
+                if "rclone" in line.lower() and any(
+                    cmd in line for cmd in ["copy", "sync", "lsf", "lsjson", "ls"]
+                ):
+                    # Clean up the line
+                    line = line.strip()
+                    if line and not line.startswith("#"):
+                        rclone_commands.append(line)
+        except IOError as e:
+            log_tail = f"Failed to read log file: {e}"
+
+    # Try to find error logs
+    err_files = list(run_dir.glob("prepare-*.err"))
+    if err_files:
+        err_file = sorted(err_files, key=lambda p: p.stat().st_mtime)[-1]
+        try:
+            lines = err_file.read_text().splitlines()
+            # Only include if there's actual content
+            if lines:
+                error_log_tail = "\n".join(lines[-tail_lines:])
+        except IOError:
+            pass
+
+    return JobLogs(
+        job_id=job_id,
+        run_dir=str(run_dir),
+        analysis=analysis,
+        log_tail=log_tail,
+        error_log_tail=error_log_tail,
+        rclone_commands=rclone_commands,
+    )

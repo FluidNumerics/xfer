@@ -16,6 +16,7 @@ from .slurm_tools import (
     cancel_job,
     check_path_exists,
     get_allowed_backends,
+    get_job_logs,
     get_job_status,
     get_jobs_by_thread,
     get_source_stats,
@@ -205,6 +206,38 @@ Common reasons for paths not existing:
                 },
             },
             "required": ["path"],
+        },
+    },
+    {
+        "name": "read_job_logs",
+        "description": """Read logs and analysis data for a transfer job.
+
+Use this when users want to:
+- See the file size distribution histogram for a transfer
+- View rclone commands that were run during manifest generation
+- Debug issues by examining log output
+- See suggested rclone flags that were determined from file analysis
+
+This returns:
+- analysis.json contents (file size histogram, suggested flags, statistics)
+- Tail of the prepare job stdout log
+- Tail of the prepare job stderr log (if any errors)
+- List of rclone commands extracted from logs
+
+Only works for jobs that belong to the current thread.""",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "job_id": {
+                    "type": "string",
+                    "description": "The Slurm job ID to get logs for",
+                },
+                "tail_lines": {
+                    "type": "integer",
+                    "description": "Number of lines to return from log files (default: 50, max: 200)",
+                },
+            },
+            "required": ["job_id"],
         },
     },
 ]
@@ -513,6 +546,36 @@ class ClaudeAgent:
                     ),
                 }
             )
+
+        elif tool_name == "read_job_logs":
+            job_id = tool_input["job_id"]
+            tail_lines = tool_input.get("tail_lines", 50)
+            # Cap tail_lines at 200
+            tail_lines = min(max(1, tail_lines), 200)
+
+            logs = get_job_logs(
+                job_id=job_id,
+                channel_id=channel_id,
+                thread_ts=thread_ts,
+                tail_lines=tail_lines,
+            )
+
+            result = {
+                "job_id": logs.job_id,
+                "run_dir": logs.run_dir,
+                "rclone_commands": logs.rclone_commands,
+            }
+
+            if logs.error:
+                result["error"] = logs.error
+            if logs.analysis:
+                result["analysis"] = logs.analysis
+            if logs.log_tail:
+                result["log_tail"] = logs.log_tail
+            if logs.error_log_tail:
+                result["error_log_tail"] = logs.error_log_tail
+
+            return json.dumps(result)
 
         else:
             return json.dumps({"error": f"Unknown tool: {tool_name}"})
