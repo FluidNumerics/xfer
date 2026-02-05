@@ -142,6 +142,22 @@ You should see:
 
 ## Bot Capabilities
 
+### Available Tools
+
+The bot has access to the following tools:
+
+| Tool | Description |
+|------|-------------|
+| `submit_transfer` | Submit a new data transfer job |
+| `check_status` | Check status of transfer jobs in the thread |
+| `list_backends` | List available/allowed rclone backends |
+| `cancel_job` | Cancel a running transfer job |
+| `get_transfer_details` | Get detailed shard-level progress |
+| `get_manifest_stats` | Scan a source path for file statistics |
+| `check_path_exists` | Verify a bucket/path is accessible |
+| `request_backend_access` | Request access to a new backend |
+| `read_job_logs` | Read job logs and analysis data |
+
 ### Check data size before transferring
 
 Ask the bot to scan a source and report statistics:
@@ -155,6 +171,22 @@ The bot will return:
 - File size distribution histogram
 - Suggested rclone flags based on file sizes
 - Estimated transfer times
+
+### View job logs and analysis
+
+For running or completed jobs, ask the bot to show logs and analysis data:
+
+```
+@xfer-bot show me the file size histogram for job 12345
+@xfer-bot what rclone commands were run for this transfer?
+@xfer-bot show me the logs for job 12345
+```
+
+The bot can return:
+- File size distribution histogram from manifest analysis
+- Suggested rclone flags that were determined during setup
+- Tail of prepare job stdout/stderr logs
+- Extracted rclone commands that were run
 
 ### Custom rclone flags
 
@@ -177,6 +209,15 @@ The bot automatically analyzes file sizes and selects optimal rclone flags:
 - **Mixed**: Balanced defaults
 
 All transfers include `--stats 600s --progress` for ETA tracking.
+
+### Thread-based conversations
+
+The bot tracks conversations by Slack thread. Key behaviors:
+
+- **Initial contact**: Mention the bot with `@xfer-bot` to start a conversation
+- **Follow-ups**: Once the bot has responded in a thread, any user can ask follow-up questions without mentioning the bot
+- **Persistent context**: The bot associates Slurm jobs with the thread they were submitted from, so asking "what's the status?" in a thread will show jobs from that thread
+- **Restart resilience**: If the bot restarts, it automatically recovers thread context from Slack's API, so ongoing conversations continue working
 
 ## Running as a Service
 
@@ -258,6 +299,11 @@ xfer-slackbot
 - Verify `XFER_ALLOWED_CHANNELS` includes the channel ID (or is unset for all channels)
 - Check logs for errors
 
+### Bot doesn't respond to thread messages
+- The bot only responds to threads where it has previously participated
+- Someone must first mention the bot with `@xfer-bot` to start the conversation
+- After a bot restart, the bot will automatically recover context by checking Slack's thread history
+
 ### "not_in_channel" errors
 - The bot needs to be invited to channels before it can read/write messages
 
@@ -267,3 +313,4 @@ xfer-slackbot
 
 ### Permission errors
 - Review OAuth scopes — you may need to reinstall the app after adding scopes
+- The `channels:history` scope is required for the bot to recover thread context after restarts
