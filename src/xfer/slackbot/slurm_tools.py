@@ -357,8 +357,9 @@ def submit_transfer(
     )
 
     # Submit the prepare job
+    # Use --export=NONE to prevent inheriting SLURM_* env vars from the bot's job
     try:
-        result = run_cmd(["sbatch", str(prepare_script)], check=True)
+        result = run_cmd(["sbatch", "--export=NONE", str(prepare_script)], check=True)
 
         # Parse job ID from output
         job_id = None
