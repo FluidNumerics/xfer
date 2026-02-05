@@ -151,12 +151,24 @@ The bot has access to the following tools:
 | `submit_transfer` | Submit a new data transfer job |
 | `check_status` | Check status of transfer jobs in the thread |
 | `list_backends` | List available/allowed rclone backends |
+| `list_buckets` | List buckets available at a specific backend |
 | `cancel_job` | Cancel a running transfer job |
 | `get_transfer_details` | Get detailed shard-level progress |
 | `get_manifest_stats` | Scan a source path for file statistics |
 | `check_path_exists` | Verify a bucket/path is accessible |
 | `request_backend_access` | Request access to a new backend |
 | `read_job_logs` | Read job logs and analysis data |
+
+### Discover available buckets
+
+Ask the bot what buckets exist at an endpoint:
+
+```
+@xfer-bot what buckets are available on s3src?
+@xfer-bot list buckets at gcs
+```
+
+The bot will return a list of bucket names that you can use in transfer paths.
 
 ### Check data size before transferring
 
