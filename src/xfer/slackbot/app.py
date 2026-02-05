@@ -80,6 +80,61 @@ def create_app(config: BotConfig | None = None) -> tuple[App, SocketModeHandler]
     agent = ClaudeAgent(config, slack_client=app.client)
     conversations = ConversationStore()
 
+    def fetch_thread_history(channel: str, thread_ts: str) -> list[dict] | None:
+        """
+        Fetch conversation history from a Slack thread and reconstruct it.
+
+        Returns the conversation history if the bot has participated in the thread,
+        or None if the bot hasn't participated or there was an error.
+
+        This is used as a fallback when in-memory conversation history is lost
+        (e.g., after bot restart).
+        """
+        try:
+            # Get our bot's user ID
+            auth_result = app.client.auth_test()
+            bot_user_id = auth_result.get("user_id")
+            if not bot_user_id:
+                return None
+
+            # Fetch thread replies
+            result = app.client.conversations_replies(
+                channel=channel,
+                ts=thread_ts,
+                limit=100,  # Fetch up to 100 messages from the thread
+            )
+            messages = result.get("messages", [])
+
+            # Check if bot has participated
+            bot_participated = any(msg.get("user") == bot_user_id for msg in messages)
+            if not bot_participated:
+                return None
+
+            # Reconstruct conversation history
+            history = []
+            for msg in messages:
+                text = msg.get("text", "")
+                if not text:
+                    continue
+
+                if msg.get("user") == bot_user_id:
+                    # Bot's message
+                    history.append({"role": "assistant", "content": text})
+                else:
+                    # User message - strip bot mentions
+                    text = re.sub(r"<@[A-Z0-9]+>\s*", "", text).strip()
+                    if text:
+                        history.append({"role": "user", "content": text})
+
+            logger.info(
+                f"Reconstructed {len(history)} messages from thread {channel}:{thread_ts}"
+            )
+            return history
+
+        except Exception as e:
+            logger.warning(f"Failed to fetch thread history: {e}")
+            return None
+
     def is_allowed_channel(channel: str) -> bool:
         """Check if the bot should respond in this channel."""
         if not config.allowed_channels:
@@ -194,37 +249,56 @@ def create_app(config: BotConfig | None = None) -> tuple[App, SocketModeHandler]
 
         # For channel messages in threads where we've participated, continue responding
         elif event.get("thread_ts"):
+            if not is_allowed_channel(channel):
+                return
+
             # Check if we have history in this thread (meaning we've been mentioned)
             history = conversations.get(channel, thread_ts)
-            if history and is_allowed_channel(channel):
-                logger.info(
-                    f"Continuing thread conversation with {user}: {text[:100]}..."
+
+            # If no in-memory history, try to reconstruct from Slack API
+            # This handles the case where the bot was restarted and lost memory
+            if not history:
+                fetched_history = fetch_thread_history(channel, thread_ts)
+                if fetched_history is not None:
+                    logger.info(
+                        f"Restored {len(fetched_history)} messages for thread {channel}:{thread_ts}"
+                    )
+                    # Restore to in-memory store for future messages in this session
+                    for msg in fetched_history:
+                        conversations.append(channel, thread_ts, msg)
+                    history = fetched_history
+                else:
+                    # Bot hasn't participated in this thread
+                    return
+
+            logger.info(
+                f"Continuing thread conversation with {user}: {text[:100]}..."
+            )
+
+            try:
+                response = agent.process_message(
+                    user_message=text,
+                    channel_id=channel,
+                    thread_ts=thread_ts,
+                    conversation_history=history.copy() if history else None,
                 )
 
-                try:
-                    response = agent.process_message(
-                        user_message=text,
-                        channel_id=channel,
-                        thread_ts=thread_ts,
-                        conversation_history=history.copy(),
-                    )
+                conversations.append(
+                    channel, thread_ts, {"role": "user", "content": text}
+                )
+                conversations.append(
+                    channel, thread_ts, {"role": "assistant", "content": response}
+                )
 
-                    conversations.append(
-                        channel, thread_ts, {"role": "user", "content": text}
-                    )
-                    conversations.append(
-                        channel, thread_ts, {"role": "assistant", "content": response}
-                    )
+                # Convert any markdown to Slack mrkdwn format
+                say(text=markdown_to_slack(response), thread_ts=thread_ts)
 
-                    # Convert any markdown to Slack mrkdwn format
-                    say(text=markdown_to_slack(response), thread_ts=thread_ts)
-
-                except Exception as e:
-                    logger.exception(f"Error in thread reply: {e}")
-                    say(
-                        text=f"Sorry, I encountered an error: {str(e)}",
-                        thread_ts=thread_ts,
-                    )
+            except Exception as e:
+                logger.exception(f"Error in thread reply: {e}")
+                say(
+                    text=f"Sorry, I encountered an error: {str(e)}",
+                    thread_ts=thread_ts,
+                )
 
     # Create socket mode handler
     handler = SocketModeHandler(app, config.slack_app_token)
