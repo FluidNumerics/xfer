@@ -177,6 +177,7 @@ def create_app(config: BotConfig | None = None) -> tuple[App, SocketModeHandler]
                 channel_id=channel,
                 thread_ts=thread_ts,
                 conversation_history=history.copy() if history else None,
+                user_id=user,
             )
 
             # Store the exchange
@@ -228,6 +229,7 @@ def create_app(config: BotConfig | None = None) -> tuple[App, SocketModeHandler]
                     channel_id=channel,
                     thread_ts=thread_ts,
                     conversation_history=history.copy() if history else None,
+                    user_id=user,
                 )
 
                 conversations.append(
@@ -291,6 +293,7 @@ def create_app(config: BotConfig | None = None) -> tuple[App, SocketModeHandler]
                     channel_id=channel,
                     thread_ts=thread_ts,
                     conversation_history=history.copy() if history else None,
+                    user_id=user,
                 )
 
                 conversations.append(

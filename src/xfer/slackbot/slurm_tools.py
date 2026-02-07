@@ -310,6 +310,7 @@ def submit_transfer(
     time_limit: Optional[str] = None,
     job_name: Optional[str] = None,
     rclone_flags: Optional[str] = None,
+    user_id: str = "",
 ) -> TransferResult:
     """
     Submit a data transfer job via xfer.
@@ -393,6 +394,7 @@ def submit_transfer(
             "prepare_job_id": job_id,
             "num_shards": num_shards,
             "submitted_at": datetime.utcnow().isoformat() + "Z",
+            "submitted_by": user_id,
         }
         (run_dir / "request.json").write_text(json.dumps(request_meta, indent=2))
 
@@ -630,11 +632,14 @@ def get_transfer_progress_by_job(job_id: str) -> Optional[dict]:
     return progress
 
 
-def cancel_job(job_id: str, channel_id: str, thread_ts: str) -> tuple[bool, str]:
+def cancel_job(
+    job_id: str, channel_id: str, thread_ts: str, *, user_id: str = ""
+) -> tuple[bool, str]:
     """
     Cancel a Slurm job.
 
-    Validates that the job belongs to the requesting thread via comment.
+    Validates that the job belongs to the requesting thread via comment,
+    and that the requesting user is the one who submitted the job.
     """
     # First, verify the job belongs to this thread
     job_info = get_job_status(job_id)
@@ -644,6 +649,18 @@ def cancel_job(job_id: str, channel_id: str, thread_ts: str) -> tuple[bool, str]
     expected_comment = slack_comment(channel_id, thread_ts)
     if expected_comment not in job_info.comment:
         return False, f"Job {job_id} does not belong to this thread. Cannot cancel."
+
+    # Check user ownership via request.json in the job's work_dir
+    if user_id and job_info.work_dir:
+        request_file = Path(job_info.work_dir) / "request.json"
+        if request_file.exists():
+            try:
+                meta = json.loads(request_file.read_text())
+                submitted_by = meta.get("submitted_by", "")
+                if submitted_by and submitted_by != user_id:
+                    return False, "Only the user who submitted this job can cancel it."
+            except (json.JSONDecodeError, IOError):
+                pass  # Allow cancel if request.json is unreadable
 
     # Cancel the job
     try:

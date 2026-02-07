@@ -405,6 +405,7 @@ class ClaudeAgent:
         tool_input: dict[str, Any],
         channel_id: str,
         thread_ts: str,
+        user_id: str = "",
     ) -> str:
         """Execute a tool and return the result as a string."""
         if tool_name == "submit_transfer":
@@ -426,6 +427,7 @@ class ClaudeAgent:
                 time_limit=tool_input.get("time_limit"),
                 job_name=tool_input.get("job_name"),
                 rclone_flags=tool_input.get("rclone_flags"),
+                user_id=user_id,
             )
             return json.dumps(result.__dict__, default=str)
 
@@ -472,6 +474,7 @@ class ClaudeAgent:
                 tool_input["job_id"],
                 channel_id,
                 thread_ts,
+                user_id=user_id,
             )
             return json.dumps({"success": success, "message": message})
 
@@ -716,6 +719,7 @@ class ClaudeAgent:
         channel_id: str,
         thread_ts: str,
         conversation_history: list[dict] | None = None,
+        user_id: str = "",
     ) -> str:
         """
         Process a user message and return Claude's response.
@@ -748,6 +752,7 @@ class ClaudeAgent:
                             block.input,
                             channel_id,
                             thread_ts,
+                            user_id=user_id,
                         )
                         tool_results.append(
                             {

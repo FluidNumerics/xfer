@@ -25,9 +25,11 @@ from xfer.slackbot.config import (
     slack_comment,
 )
 from xfer.slackbot.slurm_tools import (
+    JobInfo,
     TransferResult,
     _parse_job_from_sacct_json,
     _write_prepare_script,
+    cancel_job,
     get_allowed_backends,
     get_transfer_progress,
     validate_backend,
@@ -506,6 +508,110 @@ def test_full_flow_simulation():
         print("\n✓ Full flow simulation passed")
 
 
+def test_cancel_job_by_submitter():
+    """Test that the user who submitted a job can cancel it."""
+    print("\n=== Testing cancel job by submitter ===")
+
+    channel = "C07ABC123"
+    thread_ts = "1234567890.123456"
+    comment = slack_comment(channel, thread_ts)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        run_dir = Path(tmpdir)
+        request_meta = {"submitted_by": "U_ALICE"}
+        (run_dir / "request.json").write_text(json.dumps(request_meta))
+
+        job_info = JobInfo(
+            job_id="123",
+            array_job_id=None,
+            state="RUNNING",
+            name="xfer-slack",
+            comment=comment,
+            work_dir=str(run_dir),
+            submit_time=None,
+            start_time=None,
+            end_time=None,
+            partition="transfer",
+        )
+
+        with patch("xfer.slackbot.slurm_tools.get_job_status", return_value=job_info), \
+             patch("xfer.slackbot.slurm_tools.run_cmd"):
+            success, message = cancel_job("123", channel, thread_ts, user_id="U_ALICE")
+            assert success, f"Expected success, got: {message}"
+            assert "cancelled" in message
+
+    print("✓ Cancel job by submitter test passed")
+
+
+def test_cancel_job_by_other_user():
+    """Test that a different user cannot cancel someone else's job."""
+    print("\n=== Testing cancel job by other user ===")
+
+    channel = "C07ABC123"
+    thread_ts = "1234567890.123456"
+    comment = slack_comment(channel, thread_ts)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        run_dir = Path(tmpdir)
+        request_meta = {"submitted_by": "U_ALICE"}
+        (run_dir / "request.json").write_text(json.dumps(request_meta))
+
+        job_info = JobInfo(
+            job_id="123",
+            array_job_id=None,
+            state="RUNNING",
+            name="xfer-slack",
+            comment=comment,
+            work_dir=str(run_dir),
+            submit_time=None,
+            start_time=None,
+            end_time=None,
+            partition="transfer",
+        )
+
+        with patch("xfer.slackbot.slurm_tools.get_job_status", return_value=job_info):
+            success, message = cancel_job("123", channel, thread_ts, user_id="U_BOB")
+            assert not success, f"Expected failure, got success: {message}"
+            assert "Only the user who submitted" in message
+
+    print("✓ Cancel job by other user test passed")
+
+
+def test_cancel_job_legacy_no_submitter():
+    """Test that jobs without submitted_by field can be cancelled by anyone (backwards compat)."""
+    print("\n=== Testing cancel job legacy (no submitter) ===")
+
+    channel = "C07ABC123"
+    thread_ts = "1234567890.123456"
+    comment = slack_comment(channel, thread_ts)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        run_dir = Path(tmpdir)
+        request_meta = {"source": "s3src:bucket/data", "dest": "s3dst:archive/data"}
+        (run_dir / "request.json").write_text(json.dumps(request_meta))
+
+        job_info = JobInfo(
+            job_id="123",
+            array_job_id=None,
+            state="RUNNING",
+            name="xfer-slack",
+            comment=comment,
+            work_dir=str(run_dir),
+            submit_time=None,
+            start_time=None,
+            end_time=None,
+            partition="transfer",
+        )
+
+        with patch("xfer.slackbot.slurm_tools.get_job_status", return_value=job_info), \
+             patch("xfer.slackbot.slurm_tools.run_cmd"):
+            success, message = cancel_job("123", channel, thread_ts, user_id="U_ANYONE")
+            assert success, f"Expected success for legacy job, got: {message}"
+            assert "cancelled" in message
+
+    print("✓ Cancel job legacy (no submitter) test passed")
+
+
 def main():
     """Run all dry-run tests."""
     print("=" * 60)
@@ -524,6 +630,9 @@ def main():
     test_triage_skip()
     test_triage_error_defaults_to_respond()
     test_full_flow_simulation()
+    test_cancel_job_by_submitter()
+    test_cancel_job_by_other_user()
+    test_cancel_job_legacy_no_submitter()
 
     print("\n" + "=" * 60)
     print("All dry-run tests passed! ✓")
