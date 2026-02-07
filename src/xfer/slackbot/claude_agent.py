@@ -240,12 +240,17 @@ Use this when users want to:
 - View rclone commands that were run during manifest generation
 - Debug issues by examining log output
 - See suggested rclone flags that were determined from file analysis
+- Investigate why a transfer failed or is having problems
+- See errors from individual shard transfer tasks
 
 This returns:
-- analysis.json contents (file size histogram, suggested flags, statistics)
-- Tail of the prepare job stdout log
-- Tail of the prepare job stderr log (if any errors)
-- List of rclone commands extracted from logs
+- analysis.json contents (file size distribution, suggested rclone flags, file count/size statistics). If missing, it means the prepare job didn't reach the analysis step.
+- prepare_stdout: Slurm stdout from the prepare job (prepare-*.out). This shows manifest build progress, sharding, script rendering, and the transfer array job submission. If the prepare job failed, the error will be here.
+- prepare_stderr: Slurm stderr from the prepare job (prepare-*.err). Contains warnings and errors from the prepare phase.
+- rclone_commands: rclone commands extracted from the prepare logs.
+- shard_logs: For failed transfer shards, returns exit codes and log tails showing the actual rclone errors. For non-failed jobs, returns the most recent shard logs.
+
+IMPORTANT: Always use this tool when investigating transfer issues. Check BOTH the prepare logs (for manifest/setup failures) AND the shard logs (for transfer failures). Present the relevant error details to the user.
 
 Only works for jobs that belong to the current thread.""",
         "input_schema": {
@@ -285,6 +290,7 @@ Guidelines:
 5. Be helpful but don't make assumptions about paths - ask if unsure
 6. When reporting job status, include relevant details like progress and any errors
 7. If users want custom rclone flags (e.g., bandwidth limits, checksum verification), pass them via the rclone_flags parameter
+8. When a user reports a problem or asks you to investigate an issue with a transfer, ALWAYS use read_job_logs to examine the actual log files. The shard logs contain the real error messages from rclone and the transfer process. Do not guess at causes without reading the logs first.
 
 Transfer path format:
 - Paths should be in rclone format: "remote:bucket/path"
@@ -604,10 +610,26 @@ class ClaudeAgent:
                 result["error"] = logs.error
             if logs.analysis:
                 result["analysis"] = logs.analysis
+            else:
+                result["analysis"] = None
+                result["analysis_note"] = (
+                    "No analysis.json found. The prepare job may not have "
+                    "reached the manifest analysis step yet, or it failed "
+                    "before completing. Check the prepare logs below."
+                )
             if logs.log_tail:
-                result["log_tail"] = logs.log_tail
+                result["prepare_stdout"] = logs.log_tail
+            else:
+                result["prepare_stdout"] = None
+                result["prepare_stdout_note"] = (
+                    "No prepare-*.out log files found in the run directory."
+                )
             if logs.error_log_tail:
-                result["error_log_tail"] = logs.error_log_tail
+                result["prepare_stderr"] = logs.error_log_tail
+            else:
+                result["prepare_stderr"] = None
+            if logs.shard_logs:
+                result["shard_logs"] = logs.shard_logs
 
             return json.dumps(result)
 

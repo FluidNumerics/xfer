@@ -1014,6 +1014,7 @@ class JobLogs:
     log_tail: Optional[str]  # Last N lines of prepare job output
     error_log_tail: Optional[str]  # Last N lines of prepare job stderr
     rclone_commands: list[str]  # Extracted rclone commands from logs
+    shard_logs: list[dict] = field(default_factory=list)  # Failed/recent shard logs
     error: Optional[str] = None
 
 
@@ -1136,6 +1137,82 @@ def get_job_logs(
         except IOError:
             pass
 
+    # Read shard transfer logs (especially for failed shards)
+    shard_logs = []
+    state_dir = run_dir / "state"
+    logs_dir = run_dir / "logs"
+
+    if state_dir.exists() and logs_dir.exists():
+        # Identify failed shards from state files
+        fail_files = sorted(state_dir.glob("shard_*.fail"))
+        failed_shard_ids = set()
+        for ff in fail_files:
+            shard_id = ff.stem.replace("shard_", "")
+            failed_shard_ids.add(shard_id)
+            try:
+                exit_code = ff.read_text().strip()
+            except IOError:
+                exit_code = "unknown"
+
+            # Find the most recent attempt log for this shard
+            shard_log_files = sorted(
+                logs_dir.glob(f"shard_{shard_id}_attempt_*.log"),
+                key=lambda p: p.stat().st_mtime,
+            )
+            log_content = None
+            if shard_log_files:
+                try:
+                    lines = shard_log_files[-1].read_text().splitlines()
+                    log_content = "\n".join(lines[-tail_lines:]) if lines else ""
+                except IOError:
+                    log_content = f"Failed to read {shard_log_files[-1].name}"
+
+            shard_logs.append(
+                {
+                    "shard_id": shard_id,
+                    "status": "failed",
+                    "exit_code": exit_code,
+                    "log_file": str(shard_log_files[-1]) if shard_log_files else None,
+                    "log_tail": log_content,
+                }
+            )
+
+        # If no failed shards, include the most recent shard logs
+        # (useful for investigating in-progress or completed transfers)
+        if not fail_files:
+            all_shard_logs = sorted(
+                logs_dir.glob("shard_*_attempt_*.log"),
+                key=lambda p: p.stat().st_mtime,
+            )
+            # Take the most recent logs (up to 5)
+            for log_file in all_shard_logs[-5:]:
+                try:
+                    # Extract shard ID from filename
+                    name = log_file.stem  # e.g. shard_000001_attempt_1
+                    parts = name.split("_")
+                    shard_id = parts[1] if len(parts) >= 2 else "unknown"
+
+                    lines = log_file.read_text().splitlines()
+                    log_content = "\n".join(lines[-tail_lines:]) if lines else ""
+
+                    # Check if this shard is done
+                    done_file = state_dir / f"shard_{shard_id}.done"
+                    status = "completed" if done_file.exists() else "in_progress"
+
+                    shard_logs.append(
+                        {
+                            "shard_id": shard_id,
+                            "status": status,
+                            "log_file": str(log_file),
+                            "log_tail": log_content,
+                        }
+                    )
+                except IOError:
+                    pass
+
+    # Cap total shard logs to avoid overwhelming the response
+    shard_logs = shard_logs[:20]
+
     return JobLogs(
         job_id=job_id,
         run_dir=str(run_dir),
@@ -1143,4 +1220,5 @@ def get_job_logs(
         log_tail=log_tail,
         error_log_tail=error_log_tail,
         rclone_commands=rclone_commands,
+        shard_logs=shard_logs,
     )
