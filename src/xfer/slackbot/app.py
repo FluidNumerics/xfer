@@ -197,7 +197,7 @@ def create_app(config: BotConfig | None = None) -> tuple[App, SocketModeHandler]
             )
 
     @app.event("message")
-    def handle_message(event: dict[str, Any], say: Any) -> None:
+    def handle_message(event: dict[str, Any], say: Any, context: dict[str, Any]) -> None:
         """
         Handle direct messages and thread replies.
 
@@ -252,6 +252,11 @@ def create_app(config: BotConfig | None = None) -> tuple[App, SocketModeHandler]
         # For channel messages in threads where we've participated, continue responding
         elif event.get("thread_ts"):
             if not is_allowed_channel(channel):
+                return
+
+            # Skip @mentions — handle_mention already processes those
+            bot_user_id = context.get("bot_user_id", "")
+            if bot_user_id and f"<@{bot_user_id}>" in text:
                 return
 
             # Check if we have history in this thread (meaning we've been mentioned)

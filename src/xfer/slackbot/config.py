@@ -15,9 +15,9 @@ class SlurmDefaults:
     """Default Slurm job parameters."""
 
     partition: str = "transfer"
-    time_limit: str = "24:00:00"
-    cpus_per_task: int = 4
-    mem: str = "8G"
+    time_limit: str = "4-00:00:00"
+    cpus_per_task: int = 16
+    mem: str = "100G"
     array_concurrency: int = 64
     num_shards: int = 256
     max_attempts: int = 5
@@ -60,7 +60,7 @@ class BotConfig:
         default_factory=lambda: os.environ.get("ANTHROPIC_API_KEY", "")
     )
     claude_model: str = "claude-sonnet-4-20250514"
-    triage_model: str = "claude-haiku-4-20250414"
+    triage_model: str = "claude-haiku-4-5-20251001"
 
     # Paths
     runs_base_dir: Path = field(default_factory=lambda: Path.home() / "xfer-runs")

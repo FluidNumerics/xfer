@@ -195,6 +195,9 @@ def _write_prepare_script(
     # User flags to append after analysis-suggested flags
     user_rclone_flags = rclone_flags or ""
 
+    # Extract remote name from dest for S3 detection
+    dest_remote = dest.split(":")[0]
+
     # Get xfer install directory for uv
     xfer_dir = config.xfer_install_dir or Path(__file__).parent.parent.parent.parent.resolve()
 
@@ -363,6 +366,24 @@ if [ -n "$USER_FLAGS" ]; then
 else
     RCLONE_FLAGS="$SUGGESTED_FLAGS"
 fi
+
+# Append S3-specific flags when destination is an S3 endpoint
+DEST_TYPE=$(python3 -c "
+import configparser
+remote = '{dest_remote}'
+if remote == 's3':
+    print('s3')
+else:
+    c = configparser.ConfigParser()
+    c.read('{config.rclone.config_path}')
+    print(c.get(remote, 'type', fallback=''))
+")
+if [ "$DEST_TYPE" = "s3" ]; then
+    S3_FLAGS="--s3-upload-concurrency 8 --buffer-size=32M --multi-thread-stream=8 --multi-thread-cutoff=64M --s3-upload-cutoff 0 --s3-chunk-size 32M"
+    RCLONE_FLAGS="$RCLONE_FLAGS $S3_FLAGS"
+    echo "S3 destination detected, appended: $S3_FLAGS"
+fi
+
 echo "Final rclone flags: $RCLONE_FLAGS"
 
 echo "=== Analysis complete at $(date -Is) ==="
