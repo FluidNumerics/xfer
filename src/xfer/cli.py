@@ -246,6 +246,7 @@ def manifest_build(
         rclone_cmd += shlex.split(extra_lsjson_flags)
 
     rclone_cmd.append("--files-only")
+    rclone_cmd.append("--max-backlog=1000000")
 
     srun_cmd = ["srun", "-n", "1", "-c", "8", "--no-container-remap-root"]
     srun_cmd += pyxis_container_args(
@@ -301,9 +302,22 @@ def manifest_build(
             eprint(f"SLURM memory env vars: {slurm_mem_vars}")
         raise
 
-    # Build JSONL
+    # Build JSONL with progress reporting
     n = 0
     bytes_total = 0
+    progress_file = out.parent / "manifest.jsonl.progress"
+    last_progress_n = 0
+    PROGRESS_INTERVAL = 10_000  # update progress file every 10k files
+
+    def _write_progress() -> None:
+        """Write current listing progress to a sidecar file."""
+        try:
+            progress_file.write_text(
+                json.dumps({"files_listed": n, "bytes_listed": bytes_total})
+            )
+        except OSError:
+            pass
+
     with out.open("w", encoding="utf-8") as f:
         for item in parse_lsjson_items(cp.stdout):
             # Skip directories
@@ -345,6 +359,13 @@ def manifest_build(
             f.write(json.dumps(rec, separators=(",", ":")) + "\n")
             n += 1
 
+            if n - last_progress_n >= PROGRESS_INTERVAL:
+                _write_progress()
+                eprint(f"  manifest progress: {n:,} files, {bytes_total:,} bytes")
+                last_progress_n = n
+
+    # Final progress update and cleanup
+    _write_progress()
     eprint(f"Wrote {n} items, {bytes_total} bytes -> {out}")
 
 
@@ -513,6 +534,117 @@ def manifest_analyze(
         eprint(f"Wrote analysis to {out}")
     else:
         print(json_output)
+
+
+@manifest_app.command("combine")
+def manifest_combine(
+    source: str = typer.Option(
+        ..., help="rclone source root, e.g. s3src:bucket/prefix"
+    ),
+    dest: str = typer.Option(..., help="rclone dest root, e.g. s3dst:bucket/prefix"),
+    parts_dir: Path = typer.Option(
+        ..., exists=True, help="Directory containing lsjson-*.json part files", resolve_path=True
+    ),
+    out: Path = typer.Option(..., help="Output manifest JSONL path", resolve_path=True),
+    run_id: Optional[str] = typer.Option(
+        None, help="Run identifier; default is generated"
+    ),
+) -> None:
+    """
+    Combine multiple lsjson part files into a unified manifest.jsonl.
+
+    Reads lsjson-*.json files from --parts-dir, adjusts paths using .prefix
+    sidecar files, and writes a single manifest JSONL.
+    """
+    run_id = run_id or now_run_id()
+    mkdirp(out.parent)
+
+    # Glob part files
+    part_files = sorted(parts_dir.glob("lsjson-*.json"))
+    if not part_files:
+        eprint(f"No lsjson-*.json files found in {parts_dir}")
+        raise typer.Exit(code=2)
+
+    n = 0
+    bytes_total = 0
+    last_progress_n = 0
+    PROGRESS_INTERVAL = 10_000
+    progress_file = out.parent / "manifest.jsonl.progress"
+
+    def _write_progress() -> None:
+        try:
+            progress_file.write_text(
+                json.dumps({"files_listed": n, "bytes_listed": bytes_total})
+            )
+        except OSError:
+            pass
+
+    with out.open("w", encoding="utf-8") as f:
+        for part_file in part_files:
+            # Determine prefix from sidecar file
+            prefix_file = part_file.with_suffix(".prefix")
+            prefix = ""
+            if prefix_file.exists():
+                prefix = prefix_file.read_text(encoding="utf-8").strip()
+
+            # Read the JSON array
+            try:
+                items = json.loads(part_file.read_text(encoding="utf-8"))
+                if not isinstance(items, list):
+                    eprint(f"WARNING: {part_file} is not a JSON array, skipping")
+                    continue
+            except (json.JSONDecodeError, OSError) as e:
+                eprint(f"WARNING: Failed to read {part_file}: {e}, skipping")
+                continue
+
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("IsDir") is True:
+                    continue
+
+                rel_path = item.get("Path")
+                if not rel_path or not isinstance(rel_path, str):
+                    continue
+
+                # Adjust path with prefix
+                if prefix:
+                    rel_path = prefix + "/" + rel_path
+
+                size = int(item.get("Size") or 0)
+                bytes_total += size
+
+                mtime = item.get("ModTime")
+                hashes = item.get("Hashes") if isinstance(item.get("Hashes"), dict) else {}
+                etag = item.get("ETag") or item.get("etag")
+                storage_class = item.get("StorageClass")
+                meta = item.get("Metadata") if isinstance(item.get("Metadata"), dict) else {}
+
+                rec = {
+                    "schema": SCHEMA,
+                    "run_id": run_id,
+                    "source_root": source,
+                    "dest_root": dest,
+                    "source": source.rstrip("/") + "/" + rel_path,
+                    "dest": stable_dest_for_source(source, dest, rel_path),
+                    "path": rel_path,
+                    "size": size,
+                    "mtime": mtime,
+                    "hashes": hashes,
+                    "etag": etag,
+                    "storage_class": storage_class,
+                    "meta": meta,
+                }
+                f.write(json.dumps(rec, separators=(",", ":")) + "\n")
+                n += 1
+
+                if n - last_progress_n >= PROGRESS_INTERVAL:
+                    _write_progress()
+                    eprint(f"  manifest progress: {n:,} files, {bytes_total:,} bytes")
+                    last_progress_n = n
+
+    _write_progress()
+    eprint(f"Combined {len(part_files)} parts -> {n} items, {bytes_total} bytes -> {out}")
 
 
 # -----------------------------

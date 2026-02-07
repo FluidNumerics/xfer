@@ -84,7 +84,9 @@ The source and destination should be in rclone format: "remote:bucket/path" (e.g
         "name": "check_status",
         "description": """Check the status of transfer jobs in this thread. Use this when the user asks about job status, progress, or wants to know if their transfer is complete.
 
-This tool finds all jobs associated with the current Slack thread and returns their status.""",
+This tool finds all jobs associated with the current Slack thread and returns their status.
+
+When the phase is "building_manifest", the prepare job is listing files at the source. This can take up to several days for large datasets and is normal. The response may include files_listed and bytes_listed if the JSONL writing phase has started, or prepare_phase/prepare_detail for finer-grained progress. Only flag a concern if the job has been in this phase for more than 48 hours with no observable progress.""",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -292,6 +294,7 @@ Guidelines:
 6. When reporting job status, include relevant details like progress and any errors
 7. If users want custom rclone flags (e.g., bandwidth limits, checksum verification), pass them via the rclone_flags parameter
 8. When a user reports a problem or asks you to investigate an issue with a transfer, ALWAYS use read_job_logs to examine the actual log files. The shard logs contain the real error messages from rclone and the transfer process. Do not guess at causes without reading the logs first.
+9. The preparation phase (manifest building) can take a long time for large datasets — up to several days is normal. The prepare job has a 4-day time limit. Only consider it a potential problem if the prepare job has been running for more than 48 hours with no progress. If the status includes files_listed or bytes_listed, report those numbers to the user so they can see listing is progressing. If those numbers are absent, the rclone listing is still running (it returns results all at once when complete).
 
 Transfer path format:
 - Paths should be in rclone format: "remote:bucket/path"

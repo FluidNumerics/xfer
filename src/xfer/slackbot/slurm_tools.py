@@ -202,10 +202,10 @@ def _write_prepare_script(
 #SBATCH --job-name={job_name}-prepare
 #SBATCH --output={run_dir}/prepare-%j.out
 #SBATCH --error={run_dir}/prepare-%j.err
-#SBATCH --time=2-00:00:00
+#SBATCH --time=4-00:00:00
 #SBATCH --partition={config.slurm.partition}
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=16G
+#SBATCH --mem=250G
 #SBATCH --comment={shlex.quote(comment)}
 #SBATCH --chdir={run_dir}
 {f"#SBATCH --qos={config.slurm.qos}" if config.slurm.qos else ""}
@@ -215,6 +215,22 @@ set -euo pipefail
 # Unset conflicting Slurm memory variables to allow srun to work
 # (cluster DefMemPerCPU conflicts with job --mem setting)
 unset SLURM_MEM_PER_CPU SLURM_MEM_PER_GPU SLURM_MEM_PER_NODE
+
+# Helper to update progress.json with current phase and timestamp
+update_progress() {{
+    local phase="$1"
+    local detail="${{2:-}}"
+    python3 -c "
+import json, datetime
+p = {{'phase': '$phase', 'updated_at': datetime.datetime.now().isoformat(), 'detail': '$detail'}}
+try:
+    old = json.load(open('{run_dir}/progress.json'))
+    p['started_at'] = old.get('started_at', p['updated_at'])
+except Exception:
+    p['started_at'] = p['updated_at']
+json.dump(p, open('{run_dir}/progress.json', 'w'))
+"
+}}
 
 # Setup uv environment
 XFER_DIR="{xfer_dir}"
@@ -229,18 +245,108 @@ echo "Source: {source}"
 echo "Dest: {dest}"
 echo "Run dir: {run_dir}"
 
-# Phase 1: Build manifest
-uv run xfer manifest build \\
+# Phase 1a: List top-level directories at source
+update_progress "listing_source" "Listing top-level directories at source"
+echo "=== Phase 1a: listing top-level directories ==="
+srun -n 1 -c 8 \\
+    --container-image {shlex.quote(config.rclone.image)} \\
+    --container-mounts "{config.rclone.config_path}:{config.rclone.container_conf_path}:ro" \\
+    --no-container-remap-root \\
+    rclone lsjson {shlex.quote(source)} \\
+        --dirs-only --fast-list --max-backlog=1000000 \\
+        --config {config.rclone.container_conf_path} \\
+    > {run_dir}/top-dirs.json
+echo "=== Phase 1a complete at $(date -Is) ==="
+
+# Phase 1b: Create task assignments from directory listing
+echo "=== Phase 1b: creating task assignments ==="
+mkdir -p {run_dir}/lsjson-parts
+python3 -c "
+import json, os, math
+with open('{run_dir}/top-dirs.json') as f:
+    entries = json.load(f)
+dirs = [e['Path'] for e in entries if e.get('IsDir')]
+num_dirs = len(dirs)
+num_tasks = min(max(num_dirs, 1), 4)
+os.makedirs('{run_dir}/lsjson-parts', exist_ok=True)
+# Round-robin assign directories to tasks
+for proc_id in range(num_tasks):
+    assigned = [dirs[i] for i in range(proc_id, num_dirs, num_tasks)]
+    with open(f'{run_dir}/lsjson-parts/dirs-{{proc_id}}.txt', 'w') as fh:
+        for d in assigned:
+            fh.write(d + '\\n')
+manifest_tasks = {{'num_tasks': num_tasks, 'num_dirs': num_dirs}}
+with open('{run_dir}/lsjson-parts/manifest-tasks.json', 'w') as fh:
+    json.dump(manifest_tasks, fh)
+print(f'Assigned {{num_dirs}} directories to {{num_tasks}} tasks')
+"
+NUM_TASKS=$(python3 -c "import json; print(json.load(open('{run_dir}/lsjson-parts/manifest-tasks.json'))['num_tasks'])")
+echo "NUM_TASKS=$NUM_TASKS"
+echo "=== Phase 1b complete at $(date -Is) ==="
+
+# Phase 1c: Write manifest worker script
+echo "=== Phase 1c: writing manifest-worker.sh ==="
+cat > {run_dir}/manifest-worker.sh << 'WORKER_EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+PROC_ID="${{SLURM_PROCID}}"
+echo "Worker ${{PROC_ID}} started on $(hostname) at $(date -Is)"
+
+# Task 0 lists root-level files (non-recursive)
+if [ "${{PROC_ID}}" -eq 0 ]; then
+    echo "Listing root-level files..."
+    rclone lsjson {shlex.quote(source)} \\
+        --files-only --fast-list --max-backlog=1000000 \\
+        --config {config.rclone.container_conf_path} \\
+        > {run_dir}/lsjson-parts/lsjson-root-files.json || true
+    echo "Root-level files listing complete"
+fi
+
+# All tasks: process assigned subdirectories
+DIRS_FILE="{run_dir}/lsjson-parts/dirs-${{PROC_ID}}.txt"
+if [ -f "${{DIRS_FILE}}" ]; then
+    IDX=0
+    while IFS= read -r SUBDIR; do
+        [ -z "${{SUBDIR}}" ] && continue
+        echo "Listing subdir: ${{SUBDIR}} (idx=${{IDX}})"
+        rclone lsjson {shlex.quote(source)}/"${{SUBDIR}}" \\
+            --recursive --files-only --fast-list --max-backlog=1000000 \\
+            --config {config.rclone.container_conf_path} \\
+            > {run_dir}/lsjson-parts/lsjson-${{PROC_ID}}-${{IDX}}.json
+        echo "${{SUBDIR}}" > {run_dir}/lsjson-parts/lsjson-${{PROC_ID}}-${{IDX}}.prefix
+        IDX=$((IDX + 1))
+    done < "${{DIRS_FILE}}"
+fi
+
+echo "Worker ${{PROC_ID}} finished at $(date -Is)"
+WORKER_EOF
+chmod +x {run_dir}/manifest-worker.sh
+echo "=== Phase 1c complete at $(date -Is) ==="
+
+# Phase 1d: Run parallel manifest workers
+echo "=== Phase 1d: running $NUM_TASKS parallel manifest workers ==="
+update_progress "listing_source" "Running $NUM_TASKS parallel rclone lsjson workers"
+srun -n $NUM_TASKS -c 2 \\
+    --container-image {shlex.quote(config.rclone.image)} \\
+    --container-mounts "{config.rclone.config_path}:{config.rclone.container_conf_path}:ro,{run_dir}:{run_dir}" \\
+    --no-container-remap-root \\
+    bash {run_dir}/manifest-worker.sh
+echo "=== Phase 1d complete at $(date -Is) ==="
+
+# Phase 1e: Combine manifest parts
+echo "=== Phase 1e: combining manifest parts ==="
+update_progress "combining_manifest" "Combining parallel listing results into manifest"
+uv run xfer manifest combine \\
     --source {shlex.quote(source)} \\
     --dest {shlex.quote(dest)} \\
-    --out {run_dir}/manifest.jsonl \\
-    --rclone-image {shlex.quote(config.rclone.image)} \\
-    --rclone-config {shlex.quote(str(config.rclone.config_path))}
+    --parts-dir {run_dir}/lsjson-parts \\
+    --out {run_dir}/manifest.jsonl
 
 echo "=== Manifest build complete at $(date -Is) ==="
 
 # Phase 2: Analyze manifest to determine optimal rclone flags
 echo "=== Analyzing file size distribution ==="
+update_progress "analyzing" "Analyzing file size distribution"
 uv run xfer manifest analyze \\
     --in {run_dir}/manifest.jsonl \\
     --out {run_dir}/analysis.json
@@ -262,6 +368,7 @@ echo "Final rclone flags: $RCLONE_FLAGS"
 echo "=== Analysis complete at $(date -Is) ==="
 
 # Phase 3: Shard manifest
+update_progress "sharding" "Splitting manifest into {num_shards} shards"
 uv run xfer manifest shard \\
     --in {run_dir}/manifest.jsonl \\
     --outdir {run_dir}/shards \\
@@ -270,6 +377,7 @@ uv run xfer manifest shard \\
 echo "=== Sharding complete at $(date -Is) ==="
 
 # Phase 4: Render Slurm scripts
+update_progress "rendering" "Generating Slurm transfer scripts"
 uv run xfer slurm render \\
     --run-dir {run_dir} \\
     --num-shards {num_shards} \\
@@ -288,6 +396,7 @@ uv run xfer slurm render \\
 echo "=== Render complete at $(date -Is) ==="
 
 # Phase 5: Submit transfer array job
+update_progress "submitting" "Submitting transfer array job"
 uv run xfer slurm submit --run-dir {run_dir}
 
 echo "=== Transfer job submitted at $(date -Is) ==="
@@ -558,9 +667,30 @@ def get_transfer_progress(run_dir: Path) -> dict:
         except json.JSONDecodeError:
             pass
 
+    # Read progress.json for detailed phase info and timing
+    progress_file = run_dir / "progress.json"
+    if progress_file.exists():
+        try:
+            progress_data = json.loads(progress_file.read_text())
+            result["prepare_phase"] = progress_data.get("phase")
+            result["prepare_detail"] = progress_data.get("detail")
+            result["prepare_started_at"] = progress_data.get("started_at")
+            result["prepare_updated_at"] = progress_data.get("updated_at")
+        except json.JSONDecodeError:
+            pass
+
     # Determine phase based on what files exist
     if not manifest_file.exists():
         result["phase"] = "building_manifest"
+        # Include file count from partial manifest if available
+        partial = run_dir / "manifest.jsonl.progress"
+        if partial.exists():
+            try:
+                pdata = json.loads(partial.read_text())
+                result["files_listed"] = pdata.get("files_listed", 0)
+                result["bytes_listed"] = pdata.get("bytes_listed", 0)
+            except (json.JSONDecodeError, OSError):
+                pass
         return result
 
     if not shards_meta.exists():

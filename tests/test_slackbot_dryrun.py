@@ -174,7 +174,9 @@ def test_prepare_script_generation():
         assert "#SBATCH --comment=" in content
         assert "#SBATCH --chdir=" in content
         assert "#SBATCH --qos=data-transfer" in content
-        assert "xfer manifest build" in content
+        assert "xfer manifest combine" in content
+        assert "--mem=250G" in content
+        assert "manifest-worker.sh" in content
         assert "xfer manifest shard" in content
         assert "xfer slurm render" in content
         assert "xfer slurm submit" in content
