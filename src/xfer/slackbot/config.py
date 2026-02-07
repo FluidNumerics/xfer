@@ -60,6 +60,7 @@ class BotConfig:
         default_factory=lambda: os.environ.get("ANTHROPIC_API_KEY", "")
     )
     claude_model: str = "claude-sonnet-4-20250514"
+    triage_model: str = "claude-haiku-4-20250414"
 
     # Paths
     runs_base_dir: Path = field(default_factory=lambda: Path.home() / "xfer-runs")
@@ -105,6 +106,9 @@ class BotConfig:
 
         if xfer_install_dir := os.environ.get("XFER_INSTALL_DIR"):
             config.xfer_install_dir = Path(xfer_install_dir)
+
+        if triage_model := os.environ.get("XFER_TRIAGE_MODEL"):
+            config.triage_model = triage_model
 
         return config
 

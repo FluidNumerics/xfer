@@ -312,6 +312,83 @@ def test_claude_agent_tools():
     print("✓ Claude agent tools tests passed")
 
 
+def test_triage_respond():
+    """Test triage returns True when Haiku says respond=true."""
+    print("\n=== Testing triage: respond ===")
+
+    from xfer.slackbot.claude_agent import ClaudeAgent
+
+    config = BotConfig()
+    config.anthropic_api_key = "test-key"
+
+    with patch("anthropic.Anthropic") as MockClient:
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text='{"respond": true, "reason": "asking about transfer status"}')]
+        MockClient.return_value.messages.create.return_value = mock_response
+
+        agent = ClaudeAgent(config)
+        result = agent.should_respond_in_thread(
+            user_message="What's the status of my transfer?",
+            conversation_history=[{"role": "assistant", "content": "Your transfer has been submitted."}],
+        )
+
+        assert result is True
+
+        # Verify triage model was used
+        call_kwargs = MockClient.return_value.messages.create.call_args
+        assert call_kwargs.kwargs["model"] == config.triage_model
+
+    print("✓ Triage respond test passed")
+
+
+def test_triage_skip():
+    """Test triage returns False when Haiku says respond=false."""
+    print("\n=== Testing triage: skip ===")
+
+    from xfer.slackbot.claude_agent import ClaudeAgent
+
+    config = BotConfig()
+    config.anthropic_api_key = "test-key"
+
+    with patch("anthropic.Anthropic") as MockClient:
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text='{"respond": false, "reason": "users talking to each other"}')]
+        MockClient.return_value.messages.create.return_value = mock_response
+
+        agent = ClaudeAgent(config)
+        result = agent.should_respond_in_thread(
+            user_message="hey @alice, did you get my email?",
+            conversation_history=[{"role": "assistant", "content": "Transfer submitted."}],
+        )
+
+        assert result is False
+
+    print("✓ Triage skip test passed")
+
+
+def test_triage_error_defaults_to_respond():
+    """Test triage fails open (returns True) on error."""
+    print("\n=== Testing triage: error defaults to respond ===")
+
+    from xfer.slackbot.claude_agent import ClaudeAgent
+
+    config = BotConfig()
+    config.anthropic_api_key = "test-key"
+
+    with patch("anthropic.Anthropic") as MockClient:
+        MockClient.return_value.messages.create.side_effect = Exception("API error")
+
+        agent = ClaudeAgent(config)
+        result = agent.should_respond_in_thread(
+            user_message="check my transfer",
+            conversation_history=None,
+        )
+
+        assert result is True
+
+    print("✓ Triage error defaults to respond test passed")
+
+
 def test_full_flow_simulation():
     """Simulate a full transfer request flow."""
     print("\n=== Simulating full transfer flow ===")
@@ -443,6 +520,9 @@ def main():
     test_sacct_json_parsing()
     test_transfer_progress()
     test_claude_agent_tools()
+    test_triage_respond()
+    test_triage_skip()
+    test_triage_error_defaults_to_respond()
     test_full_flow_simulation()
 
     print("\n" + "=" * 60)

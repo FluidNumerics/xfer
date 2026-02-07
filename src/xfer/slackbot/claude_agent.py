@@ -7,6 +7,7 @@ This module defines the tools Claude can use and handles the conversation flow.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 import anthropic
@@ -316,6 +317,26 @@ Formatting (IMPORTANT - you are responding in Slack, not markdown):
 
 Keep responses brief and focused on the task at hand."""
 
+TRIAGE_SYSTEM_PROMPT = """You are classifying whether a message in a Slack thread is directed at the data transfer bot.
+
+The bot helps users submit and monitor data transfer jobs on an HPC cluster.
+
+Respond = true when:
+- The message asks about transfers, jobs, or their status
+- The message is a follow-up to something the bot said
+- The message contains instructions or requests for the bot
+- The user asks a question the bot can help with
+
+Respond = false when:
+- Users are talking to each other, not the bot
+- The message is a side conversation unrelated to the bot
+- Users are thanking or addressing each other
+- The message is general chatter not directed at the bot
+
+Output ONLY valid JSON: {"respond": true, "reason": "..."}"""
+
+logger = logging.getLogger(__name__)
+
 
 class ClaudeAgent:
     """Agent that uses Claude to interpret requests and execute tools."""
@@ -324,6 +345,59 @@ class ClaudeAgent:
         self.config = config
         self.client = anthropic.Anthropic(api_key=config.anthropic_api_key)
         self.slack_client = slack_client  # For posting to support channel
+
+    def should_respond_in_thread(
+        self,
+        user_message: str,
+        conversation_history: list[dict] | None = None,
+    ) -> bool:
+        """Decide if a thread message is directed at the bot using a lightweight triage call.
+
+        Returns True if the bot should respond, False otherwise.
+        Fails open (returns True) on any error.
+        """
+        try:
+            # Build context from recent history
+            messages: list[dict] = []
+            if conversation_history:
+                for msg in conversation_history[-5:]:
+                    content = msg.get("content", "")
+                    if len(content) > 200:
+                        content = content[:200] + "..."
+                    messages.append({"role": msg["role"], "content": content})
+            messages.append({"role": "user", "content": user_message})
+
+            response = self.client.messages.create(
+                model=self.config.triage_model,
+                max_tokens=100,
+                system=TRIAGE_SYSTEM_PROMPT,
+                messages=messages,
+            )
+
+            raw = response.content[0].text.strip()
+
+            # Try JSON parse first, fall back to string search
+            try:
+                result = json.loads(raw)
+                should_respond = result.get("respond", True)
+            except (json.JSONDecodeError, AttributeError):
+                should_respond = '"respond": false' not in raw.lower()
+
+            reason = ""
+            try:
+                result = json.loads(raw)
+                reason = result.get("reason", "")
+            except Exception:
+                pass
+
+            logger.info(
+                f"Triage decision: respond={should_respond}, reason={reason!r}, raw={raw!r}"
+            )
+            return should_respond
+
+        except Exception:
+            logger.exception("Triage call failed, defaulting to respond")
+            return True
 
     def execute_tool(
         self,

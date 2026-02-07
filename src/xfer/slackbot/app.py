@@ -271,6 +271,16 @@ def create_app(config: BotConfig | None = None) -> tuple[App, SocketModeHandler]
                     # Bot hasn't participated in this thread
                     return
 
+            # Triage: check if message is directed at the bot
+            if not agent.should_respond_in_thread(
+                user_message=text,
+                conversation_history=history.copy() if history else None,
+            ):
+                logger.info(f"Triage: skipping message from {user} in {channel}:{thread_ts}")
+                # Still store the message so future triage/responses have full context
+                conversations.append(channel, thread_ts, {"role": "user", "content": text})
+                return
+
             logger.info(
                 f"Continuing thread conversation with {user}: {text[:100]}..."
             )
