@@ -885,7 +885,7 @@ def slurm_render(
             else s
         )
 
-    extras = sbatch_extras.rstrip()
+    extras = sbatch_extras.replace("\\n", "\n").rstrip()
     extras = extras if extras else ""
 
     sbatch_text = SBATCH_ARRAY_SH.format(
