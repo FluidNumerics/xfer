@@ -46,7 +46,7 @@ class ConversationStore:
     In production, you might want to use Redis or similar for persistence.
     """
 
-    def __init__(self, max_messages: int = 20):
+    def __init__(self, max_messages: int = 10):
         self.max_messages = max_messages
         self._store: dict[str, list[dict]] = {}
 
@@ -101,7 +101,7 @@ def create_app(config: BotConfig | None = None) -> tuple[App, SocketModeHandler]
             result = app.client.conversations_replies(
                 channel=channel,
                 ts=thread_ts,
-                limit=100,  # Fetch up to 100 messages from the thread
+                limit=20,  # Limit to recent messages to avoid rate limits
             )
             messages = result.get("messages", [])
 
