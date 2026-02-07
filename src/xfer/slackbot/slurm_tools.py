@@ -331,6 +331,17 @@ def submit_transfer(
                 message=f"Invalid {label}: {msg}",
             )
 
+    # Verify source path exists before creating run directory and submitting
+    source_check = check_path_exists(source, config)
+    if not source_check.exists:
+        error_detail = source_check.error or "Path not found"
+        return TransferResult(
+            success=False,
+            job_id=None,
+            run_dir=None,
+            message=f"Source path not found: {source}. {error_detail}",
+        )
+
     # Generate run directory
     timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     run_name = f"slack_{channel_id}_{timestamp}"
