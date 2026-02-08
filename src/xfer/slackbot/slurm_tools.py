@@ -632,6 +632,159 @@ def get_jobs_by_thread(channel_id: str, thread_ts: str) -> list[JobInfo]:
     return [j for j in all_jobs if comment_pattern in (j.comment or "")]
 
 
+# Slurm states that indicate a terminal failure
+_FAILED_STATES = {"FAILED", "CANCELLED", "TIMEOUT", "NODE_FAIL", "OUT_OF_MEMORY"}
+
+
+def _derive_phase(
+    prepare_job: Optional[JobInfo],
+    transfer_job: Optional[JobInfo],
+) -> tuple[str, str]:
+    """Derive transfer phase from Slurm job states.
+
+    Returns (phase, detail) tuple.
+    """
+    if not prepare_job:
+        return ("unknown", "No prepare job found")
+
+    prep_state = prepare_job.state
+
+    if prep_state == "PENDING":
+        return ("pending", "Prepare job is queued")
+    if prep_state == "RUNNING":
+        return ("preparing", "Prepare job is running")
+    if prep_state in _FAILED_STATES:
+        return ("prepare_failed", f"Prepare job {prep_state}")
+
+    # Prepare is COMPLETED
+    if prep_state == "COMPLETED":
+        if not transfer_job:
+            return ("prepare_complete", "Prepare finished but no transfer job found")
+
+        xfer_state = transfer_job.state
+
+        if xfer_state == "PENDING":
+            return ("waiting_to_start", "Transfer job is queued")
+        if xfer_state == "RUNNING":
+            return ("transferring", "Transfer job is running")
+        if xfer_state == "COMPLETED":
+            return ("complete", "Transfer job completed")
+        if xfer_state in _FAILED_STATES:
+            return ("failed", f"Transfer job {xfer_state}")
+
+        return ("transferring", f"Transfer job state: {xfer_state}")
+
+    return ("unknown", f"Prepare job state: {prep_state}")
+
+
+def _group_jobs_by_transfer(
+    jobs: list[JobInfo],
+) -> list[tuple[Optional[JobInfo], Optional[JobInfo], str]]:
+    """Group jobs into (prepare_job, transfer_job, base_name) tuples.
+
+    Matches by naming convention: prepare jobs end with ``-prepare``,
+    transfer jobs use the base name directly.  When multiple jobs share
+    the same base name, the most recently submitted one wins.
+    """
+    # Bucket jobs by base name
+    prepare_by_base: dict[str, list[JobInfo]] = {}
+    transfer_by_base: dict[str, list[JobInfo]] = {}
+
+    for job in jobs:
+        name = job.name or ""
+        if name.endswith("-prepare"):
+            base = name[: -len("-prepare")]
+            prepare_by_base.setdefault(base, []).append(job)
+        else:
+            base = name
+            transfer_by_base.setdefault(base, []).append(job)
+
+    # Pick the most recent job per base name (highest submit_time)
+    def _newest(job_list: list[JobInfo]) -> JobInfo:
+        return max(job_list, key=lambda j: j.submit_time or "")
+
+    all_bases = set(prepare_by_base) | set(transfer_by_base)
+    groups = []
+    for base in sorted(all_bases):
+        prep = _newest(prepare_by_base[base]) if base in prepare_by_base else None
+        xfer = _newest(transfer_by_base[base]) if base in transfer_by_base else None
+        groups.append((prep, xfer, base))
+
+    return groups
+
+
+def get_transfer_status_by_thread(
+    channel_id: str, thread_ts: str
+) -> list[dict]:
+    """Get transfer status for all jobs in a Slack thread.
+
+    Combines Slurm job state (via sacct) with file-based progress for a
+    unified view.  Returns a list of dicts, one per transfer group.
+    """
+    jobs = get_jobs_by_thread(channel_id, thread_ts)
+    if not jobs:
+        return []
+
+    groups = _group_jobs_by_transfer(jobs)
+    results = []
+
+    for prep_job, xfer_job, base_name in groups:
+        phase, detail = _derive_phase(prep_job, xfer_job)
+
+        entry: dict = {
+            "base_name": base_name,
+            "phase": phase,
+            "detail": detail,
+        }
+
+        # Attach job metadata
+        if prep_job:
+            entry["prepare_job"] = {
+                "job_id": prep_job.job_id,
+                "state": prep_job.state,
+                "submit_time": prep_job.submit_time,
+            }
+        if xfer_job:
+            entry["transfer_job"] = {
+                "job_id": xfer_job.job_id,
+                "state": xfer_job.state,
+                "submit_time": xfer_job.submit_time,
+            }
+
+        # Enrich with file-based progress when a work_dir is available
+        work_dir = None
+        if prep_job and prep_job.work_dir:
+            work_dir = Path(prep_job.work_dir)
+        elif xfer_job and xfer_job.work_dir:
+            work_dir = Path(xfer_job.work_dir)
+
+        if work_dir and work_dir.exists():
+            file_progress = get_transfer_progress(work_dir)
+            entry["progress"] = file_progress
+
+            file_phase = file_progress.get("phase", "unknown")
+
+            # Let file-based signals refine the Slurm-derived phase
+            if phase == "transferring":
+                if file_phase == "complete":
+                    # Shards finished before job exited
+                    entry["phase"] = "complete"
+                elif (
+                    file_phase == "failed"
+                    and file_progress.get("pending", 1) == 0
+                    and file_progress.get("in_progress", 1) == 0
+                ):
+                    entry["phase"] = "failed"
+            elif phase == "complete":
+                # Slurm says done — check for partial failures
+                if file_progress.get("failed", 0) > 0:
+                    entry["phase"] = "complete_with_failures"
+
+        results.append(entry)
+
+    return results
+
+
 def get_job_status(job_id: str) -> Optional[JobInfo]:
     """Get detailed status for a specific job ID."""
     cmd = ["sacct", "--json", "-j", job_id, "-X"]

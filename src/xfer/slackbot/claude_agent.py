@@ -23,6 +23,7 @@ from .slurm_tools import (
     get_source_stats,
     get_transfer_progress,
     get_transfer_progress_by_job,
+    get_transfer_status_by_thread,
     list_buckets,
     submit_transfer,
 )
@@ -84,9 +85,20 @@ The source and destination should be in rclone format: "remote:bucket/path" (e.g
         "name": "check_status",
         "description": """Check the status of transfer jobs in this thread. Use this when the user asks about job status, progress, or wants to know if their transfer is complete.
 
-This tool finds all jobs associated with the current Slack thread and returns their status.
+This tool finds all jobs associated with the current Slack thread and returns their status. It correlates prepare and transfer jobs by name and derives a unified phase from Slurm job states, enriched with file-based shard progress when available.
 
-When the phase is "building_manifest", the prepare job is listing files at the source. This can take up to several days for large datasets and is normal. The response may include files_listed and bytes_listed if the JSONL writing phase has started, or prepare_phase/prepare_detail for finer-grained progress. Only flag a concern if the job has been in this phase for more than 48 hours with no observable progress.""",
+Phases (derived from Slurm job states):
+- "pending" — prepare job is queued
+- "preparing" — prepare job is running (manifest build, sharding, etc.)
+- "prepare_failed" — prepare job FAILED/CANCELLED/TIMEOUT
+- "prepare_complete" — prepare finished but no transfer job found (anomaly)
+- "waiting_to_start" — prepare done, transfer job is queued
+- "transferring" — transfer job is running
+- "complete" — transfer finished successfully
+- "complete_with_failures" — transfer job completed but some shards failed
+- "failed" — transfer job FAILED/CANCELLED/TIMEOUT
+
+When the phase is "preparing", the prepare job may be listing files at the source. This can take up to several days for large datasets and is normal. The prepare job has a 4-day time limit. Only flag a concern if the prepare job has been running for more than 48 hours with no progress. The progress field may include files_listed, bytes_listed, or prepare_phase/prepare_detail for finer-grained tracking.""",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -446,16 +458,8 @@ class ClaudeAgent:
                     return json.dumps(job.to_dict())
                 return json.dumps({"error": f"Job {job_id} not found"})
             else:
-                # Get all jobs for this thread with progress info
-                jobs = get_jobs_by_thread(channel_id, thread_ts)
-                results = []
-                for job in jobs:
-                    if job.work_dir:
-                        progress = get_transfer_progress_by_job(job.job_id)
-                        if progress:
-                            results.append(progress)
-                            continue
-                    results.append(job.to_dict())
+                # Get grouped status for all transfers in this thread
+                results = get_transfer_status_by_thread(channel_id, thread_ts)
                 return json.dumps(results)
 
         elif tool_name == "list_backends":
