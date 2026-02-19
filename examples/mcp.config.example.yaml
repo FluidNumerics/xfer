@@ -1,0 +1,117 @@
+# ~/.config/xfer/mcp.yaml
+#
+# xfer MCP server configuration.
+# Copy this file to ~/.config/xfer/mcp.yaml and fill in your values.
+# Override the path by setting XFER_MCP_CONFIG=/path/to/your/config.yaml.
+#
+# Add this server to Claude Code:
+#   claude mcp add xfer-mcp -- xfer-mcp
+#
+# Or for Claude Desktop, add to ~/Library/Application Support/Claude/claude_desktop_config.json:
+#   {
+#     "mcpServers": {
+#       "xfer-mcp": { "command": "xfer-mcp" }
+#     }
+#   }
+
+clusters:
+  # -------------------------------------------------------------------------
+  # Each cluster entry describes an SSH-accessible system running Slurm + pyxis.
+  # -------------------------------------------------------------------------
+
+  lambda:
+    host: gpu-cluster.lambda.example.com
+    user: myuser
+    description: Lambda GPU cluster with Slurm + pyxis/enroot
+    # ssh_key: ~/.ssh/id_rsa          # Optional: path to SSH private key.
+    #                                  # Omit to rely on ssh-agent or ~/.ssh/config.
+    # ssh_extra_opts:                  # Optional: extra SSH -o options.
+    #   - ServerAliveInterval=60
+
+    # Path to the xfer binary on the cluster (use full path if not on $PATH).
+    xfer_path: xfer
+
+    # Path to rclone.conf on the cluster (supports ~).
+    rclone_config: ~/.config/rclone/rclone.conf
+
+    # OCI image that provides rclone (pulled by enroot/pyxis).
+    rclone_image: rclone/rclone:latest
+
+    # Where rclone.conf is mounted inside the container.
+    rclone_conf_in_container: /etc/rclone/rclone.conf
+
+    # Slurm defaults – override per-call in the MCP tools if needed.
+    default_partition: transfer
+    default_cpus_per_task: 4
+    default_mem: 8G
+    default_time_limit: "24:00:00"
+    default_num_shards: 256
+    default_array_concurrency: 64
+    default_max_attempts: 5
+
+  coreweave:
+    host: compute.coreweave.example.com
+    user: myuser
+    description: CoreWeave compute cluster
+    xfer_path: xfer
+    rclone_config: ~/.config/rclone/rclone.conf
+    rclone_image: rclone/rclone:latest
+    rclone_conf_in_container: /etc/rclone/rclone.conf
+    default_partition: cpu
+    default_cpus_per_task: 8
+    default_mem: 16G
+    default_time_limit: "24:00:00"
+    default_num_shards: 256
+    default_array_concurrency: 96
+    default_max_attempts: 5
+
+
+endpoints:
+  # -------------------------------------------------------------------------
+  # S3 / object-storage endpoints.
+  # rclone_remote must match a remote name defined in rclone.conf on the cluster.
+  # -------------------------------------------------------------------------
+
+  coreweave-bridge-data:
+    type: s3
+    rclone_remote: coreweave-obj      # remote name in rclone.conf
+    bucket: bridge-data
+    description: CoreWeave AI Object Storage, bridge-data bucket
+    accessible_from:
+      - lambda
+      - coreweave
+
+  lambda-datasets:
+    type: s3
+    rclone_remote: lambda-s3
+    bucket: datasets
+    description: Lambda Labs S3, datasets bucket
+    accessible_from:
+      - lambda
+
+  # S3 endpoint with a sub-prefix
+  coreweave-checkpoints:
+    type: s3
+    rclone_remote: coreweave-obj
+    bucket: model-store
+    prefix: checkpoints/              # optional path prefix inside the bucket
+    description: CoreWeave model store – checkpoints prefix
+    accessible_from:
+      - lambda
+      - coreweave
+
+  # -------------------------------------------------------------------------
+  # Local filesystem endpoints on a cluster.
+  # -------------------------------------------------------------------------
+
+  lambda-scratch:
+    type: local
+    cluster: lambda
+    path: /scratch
+    description: Lambda cluster high-speed scratch filesystem
+
+  lambda-home:
+    type: local
+    cluster: lambda
+    path: ~/
+    description: Lambda cluster home directory

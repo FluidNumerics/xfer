@@ -9,8 +9,15 @@ dependencies = [
   "rich>=13.7.1",
 ]
 
+[project.optional-dependencies]
+mcp = [
+    "mcp>=1.0.0",
+    "pyyaml>=6.0",
+]
+
 [project.scripts]
 xfer = "xfer.cli:main"
+xfer-mcp = "xfer.mcp.server:main"
 
 [build-system]
 requires = ["hatchling>=1.25.0"]
