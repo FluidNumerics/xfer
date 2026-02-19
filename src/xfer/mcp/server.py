@@ -1,6 +1,7 @@
 """xfer MCP server – gives Claude tools to orchestrate xfer data transfers."""
 from __future__ import annotations
 
+import json
 import os
 import shlex
 import subprocess
@@ -9,6 +10,7 @@ from typing import Optional
 from mcp.server.fastmcp import FastMCP
 
 from .config import ClusterConfig, XferMcpConfig, load_config
+from xfer.est import ascii_bar, human_bytes
 
 # ---------------------------------------------------------------------------
 # Config loading (once at import time)
@@ -85,6 +87,224 @@ def _result(rc: int, stdout: str, stderr: str) -> str:
         parts.append(f"stderr:\n{stderr.strip()}")
     parts.append(f"exit_code: {rc}")
     return "\n\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Manifest analysis helpers
+# ---------------------------------------------------------------------------
+
+_KiB = 1024
+_MiB = _KiB * 1024
+_GiB = _MiB * 1024
+
+# Compact Python 3 script (no external deps, no single quotes) run on the
+# cluster via `cat manifest.jsonl | python3 -c '<script>'`.
+# Outputs a single JSON line with size stats and a pow2 histogram.
+_ANALYZE_SCRIPT = """\
+import sys, json, math
+sizes = []
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        obj = json.loads(line)
+    except Exception:
+        continue
+    if obj.get("IsDir") or obj.get("isdir"):
+        continue
+    sz = obj.get("size", obj.get("Size"))
+    if sz is None:
+        continue
+    try:
+        sizes.append(int(sz))
+    except Exception:
+        pass
+sizes.sort()
+n = len(sizes)
+total = sum(sizes)
+def pct(p):
+    if not n:
+        return 0
+    idx = min(n - 1, max(0, int(math.ceil(n * p / 100.0)) - 1))
+    return sizes[idx]
+def pow2edges(lo, hi):
+    lo = max(lo, 1)
+    hi = max(hi, lo + 1)
+    lp = 2 ** max(0, int(math.floor(math.log2(lo))))
+    hp = 2 ** int(math.ceil(math.log2(hi)))
+    if hp <= lp:
+        hp = lp * 2
+    edges, x = [], lp
+    while x < hp:
+        edges.append(x)
+        x *= 2
+    edges.append(hp)
+    return edges
+if sizes:
+    edges = pow2edges(min(sizes), max(sizes))
+    bins = [{"lo": edges[i], "hi": edges[i+1], "count": 0, "bytes": 0} for i in range(len(edges)-1)]
+    for sz in sizes:
+        for i, b in enumerate(bins):
+            if i < len(bins) - 1:
+                if b["lo"] <= sz < b["hi"]:
+                    b["count"] += 1; b["bytes"] += sz; break
+            else:
+                b["count"] += 1; b["bytes"] += sz; break
+    bins = [b for b in bins if b["count"] > 0]
+else:
+    bins = []
+print(json.dumps({"objects": n, "bytes_total": total, "mean_bytes": int(total/n) if n else 0, "percentiles": {"p10": pct(10), "p25": pct(25), "p50": pct(50), "p75": pct(75), "p90": pct(90), "p95": pct(95), "p99": pct(99)}, "histogram": bins}))
+"""
+
+
+def _suggest_rclone_flags(stats: dict) -> tuple[list[tuple[str, str | None]], list[str]]:
+    """Derive rclone flag recommendations from manifest size statistics.
+
+    Returns ([(flag, value_or_None), ...], [reasoning lines]).
+    """
+    p50 = stats["percentiles"]["p50"]
+    p90 = stats["percentiles"]["p90"]
+
+    flags: list[tuple[str, str | None]] = []
+    notes: list[str] = []
+
+    # --- Base parallelism driven by median file size ---
+    if p50 < _MiB:
+        transfers, checkers, buf = 128, 256, "8M"
+        notes.append(
+            f"Median {human_bytes(p50)} < 1 MiB: maximise --transfers for small-file throughput"
+        )
+    elif p50 < 64 * _MiB:
+        transfers, checkers, buf = 32, 64, "32M"
+        notes.append(
+            f"Median {human_bytes(p50)} (1–64 MiB): balanced parallelism"
+        )
+    elif p50 < 512 * _MiB:
+        transfers, checkers, buf = 16, 32, "64M"
+        notes.append(
+            f"Median {human_bytes(p50)} (64–512 MiB): fewer concurrent transfers, larger buffer"
+        )
+    else:
+        transfers, checkers, buf = 8, 16, "128M"
+        notes.append(
+            f"Median {human_bytes(p50)} > 512 MiB: minimal parallelism, large per-transfer buffer"
+        )
+
+    flags += [
+        ("--transfers", str(transfers)),
+        ("--checkers", str(checkers)),
+        ("--buffer-size", buf),
+    ]
+
+    # --- Multipart / multi-thread tuning driven by P90 ---
+    if p90 > _GiB:
+        flags += [
+            ("--multi-thread-streams", "8"),
+            ("--s3-upload-concurrency", "16"),
+            ("--s3-chunk-size", "128M"),
+        ]
+        notes.append(
+            f"P90 {human_bytes(p90)} > 1 GiB: large S3 chunk size + high multi-thread concurrency"
+        )
+    elif p90 > 200 * _MiB:
+        flags += [
+            ("--multi-thread-streams", "4"),
+            ("--s3-upload-concurrency", "8"),
+            ("--s3-chunk-size", "64M"),
+        ]
+        notes.append(
+            f"P90 {human_bytes(p90)} > 200 MiB: enable multi-thread streams + S3 multipart tuning"
+        )
+    else:
+        notes.append(
+            f"P90 {human_bytes(p90)} ≤ 200 MiB: multipart flags not needed"
+        )
+
+    # Always-on reliability flags
+    flags += [
+        ("--fast-list", None),
+        ("--retries", "10"),
+        ("--low-level-retries", "20"),
+    ]
+
+    return flags, notes
+
+
+def _format_analysis(stats: dict, run_dir: str) -> str:
+    """Format remote stats JSON into a human-readable histogram + flag suggestions."""
+    n = stats["objects"]
+    total = stats["bytes_total"]
+    mean = stats["mean_bytes"]
+    pct = stats["percentiles"]
+    bins = stats["histogram"]
+
+    lines = [
+        f"## Manifest analysis: {run_dir}/manifest.jsonl",
+        "",
+        f"  Objects : {n:,}",
+        f"  Total   : {human_bytes(total)}  ({total:,} bytes)",
+        f"  Mean    : {human_bytes(mean)}",
+        "",
+        "### File size percentiles",
+        f"  P10={human_bytes(pct['p10'])}  "
+        f"P25={human_bytes(pct['p25'])}  "
+        f"P50={human_bytes(pct['p50'])}  "
+        f"P75={human_bytes(pct['p75'])}",
+        f"  P90={human_bytes(pct['p90'])}  "
+        f"P95={human_bytes(pct['p95'])}  "
+        f"P99={human_bytes(pct['p99'])}",
+        "",
+        "### File size histogram (pow2 bins)",
+    ]
+
+    if bins:
+        max_count = max(b["count"] for b in bins)
+        lines.append("| Size range | Files | %files | Bytes | %bytes | Bar |")
+        lines.append("|---|---:|---:|---:|---:|---|")
+        for b in bins:
+            lo, hi, count, bts = b["lo"], b["hi"], b["count"], b["bytes"]
+            pf = 100.0 * count / n if n else 0.0
+            pb = 100.0 * bts / total if total else 0.0
+            bar = ascii_bar(count, max_count, width=30)
+            lines.append(
+                f"| [{human_bytes(lo)}, {human_bytes(hi)}) "
+                f"| {count:,} | {pf:.1f}% "
+                f"| {human_bytes(bts)} | {pb:.1f}% | {bar} |"
+            )
+    else:
+        lines.append("(no files found in manifest)")
+
+    flags, notes = _suggest_rclone_flags(stats)
+
+    lines += [
+        "",
+        "### Suggested rclone flags",
+        "",
+        "**Reasoning:**",
+    ]
+    for note in notes:
+        lines.append(f"- {note}")
+
+    # Build the flag string two ways: multi-line for readability, single-line for xfer
+    flag_parts = [f"{f} {v}" if v is not None else f for f, v in flags]
+    multiline = " \\\n  ".join(flag_parts)
+    singleline = " ".join(flag_parts)
+
+    lines += [
+        "",
+        "**Flags** (formatted for copy-paste):",
+        "```",
+        multiline,
+        "```",
+        "",
+        "**Pass to xfer** via `--rclone-flags`:",
+        "```",
+        f'--rclone-flags "{singleline}"',
+        "```",
+    ]
+
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -600,6 +820,43 @@ def get_run_config(cluster: str, run_dir: str) -> str:
     command = "cat " + _rq(run_dir) + "/config.resolved.json"
     rc, stdout, stderr = _ssh(c, command, timeout=15)
     return _result(rc, stdout, stderr)
+
+
+# ---------------------------------------------------------------------------
+# Manifest analysis
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def analyze_manifest(cluster: str, run_dir: str) -> str:
+    """Analyse the file size distribution in a manifest and suggest rclone flags.
+
+    Streams {run_dir}/manifest.jsonl through a lightweight Python script on the
+    cluster to compute object count, total bytes, size percentiles, and a
+    pow2-binned file size histogram. Returns the histogram and recommends
+    --transfers, --checkers, --buffer-size, --multi-thread-streams, and S3
+    multipart flags tuned to the observed distribution.
+
+    Run after build_manifest() and before render_slurm_scripts() so the
+    suggested flags can be fed into --rclone-flags.
+
+    Args:
+        cluster: Cluster name from list_clusters()
+        run_dir: Run directory containing manifest.jsonl
+    """
+    c = _cluster(cluster)
+    command = (
+        "cat " + _rq(run_dir) + "/manifest.jsonl"
+        " | python3 -c " + shlex.quote(_ANALYZE_SCRIPT)
+    )
+    rc, stdout, stderr = _ssh(c, command, timeout=300)
+    if rc != 0:
+        return _result(rc, stdout, stderr)
+    try:
+        stats = json.loads(stdout.strip())
+    except json.JSONDecodeError as exc:
+        return f"Failed to parse analysis output: {exc}\n\nRaw output:\n{stdout[:2000]}"
+    return _format_analysis(stats, run_dir)
 
 
 # ---------------------------------------------------------------------------
