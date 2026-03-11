@@ -536,6 +536,57 @@ def manifest_analyze(
         print(json_output)
 
 
+@manifest_app.command("rebase")
+def manifest_rebase(
+    infile: Path = typer.Option(
+        ...,
+        "--in",
+        exists=True,
+        dir_okay=False,
+        help="Input manifest JSONL",
+        resolve_path=True,
+    ),
+    out: Path = typer.Option(..., help="Output manifest JSONL path", resolve_path=True),
+    source_root: Optional[str] = typer.Option(
+        None, help="New source root (rclone remote:path). If omitted, kept from manifest."
+    ),
+    dest_root: Optional[str] = typer.Option(
+        None, help="New dest root (rclone remote:path). If omitted, kept from manifest."
+    ),
+) -> None:
+    """
+    Rebase a manifest to a different source/dest root.
+
+    Useful when a manifest was built on one cluster (e.g. against a local VAST path)
+    and needs to be used on another cluster where the same data is accessed via a
+    different endpoint (e.g. an S3 remote). The relative 'path' field is preserved;
+    only source_root, dest_root, source, and dest are rewritten.
+    """
+    mkdirp(out.parent)
+
+    n = 0
+    with infile.open(encoding="utf-8") as fin, out.open("w", encoding="utf-8") as fout:
+        for ln in fin:
+            if not ln.strip():
+                continue
+            rec = json.loads(ln)
+            new_src = source_root if source_root is not None else rec.get("source_root", "")
+            new_dst = dest_root if dest_root is not None else rec.get("dest_root", "")
+            rel = rec.get("path", "")
+            rec["source_root"] = new_src
+            rec["dest_root"] = new_dst
+            rec["source"] = new_src.rstrip("/") + "/" + rel
+            rec["dest"] = stable_dest_for_source(new_src, new_dst, rel)
+            fout.write(json.dumps(rec, separators=(",", ":")) + "\n")
+            n += 1
+
+    eprint(f"Rebased {n} records -> {out}")
+    if source_root is not None:
+        eprint(f"  source_root: {source_root}")
+    if dest_root is not None:
+        eprint(f"  dest_root:   {dest_root}")
+
+
 @manifest_app.command("combine")
 def manifest_combine(
     source: str = typer.Option(
