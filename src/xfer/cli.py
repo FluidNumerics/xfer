@@ -279,6 +279,7 @@ def manifest_build(
             ef.write("\n")
 
             import traceback
+
             ef.write("--- TRACEBACK ---\n")
             ef.write(traceback.format_exc())
 
@@ -297,7 +298,9 @@ def manifest_build(
         eprint(f"Command: {' '.join(shlex.quote(c) for c in srun_cmd)}")
         if hasattr(exc, "stderr") and exc.stderr:
             eprint(f"stderr: {exc.stderr}")
-        slurm_mem_vars = {k: v for k, v in os.environ.items() if "MEM" in k and k.startswith("SLURM")}
+        slurm_mem_vars = {
+            k: v for k, v in os.environ.items() if "MEM" in k and k.startswith("SLURM")
+        }
         if slurm_mem_vars:
             eprint(f"SLURM memory env vars: {slurm_mem_vars}")
         raise
@@ -548,7 +551,8 @@ def manifest_rebase(
     ),
     out: Path = typer.Option(..., help="Output manifest JSONL path", resolve_path=True),
     source_root: Optional[str] = typer.Option(
-        None, help="New source root (rclone remote:path). If omitted, kept from manifest."
+        None,
+        help="New source root (rclone remote:path). If omitted, kept from manifest.",
     ),
     dest_root: Optional[str] = typer.Option(
         None, help="New dest root (rclone remote:path). If omitted, kept from manifest."
@@ -570,7 +574,9 @@ def manifest_rebase(
             if not ln.strip():
                 continue
             rec = json.loads(ln)
-            new_src = source_root if source_root is not None else rec.get("source_root", "")
+            new_src = (
+                source_root if source_root is not None else rec.get("source_root", "")
+            )
             new_dst = dest_root if dest_root is not None else rec.get("dest_root", "")
             rel = rec.get("path", "")
             rec["source_root"] = new_src
@@ -594,7 +600,10 @@ def manifest_combine(
     ),
     dest: str = typer.Option(..., help="rclone dest root, e.g. s3dst:bucket/prefix"),
     parts_dir: Path = typer.Option(
-        ..., exists=True, help="Directory containing lsjson-*.json part files", resolve_path=True
+        ...,
+        exists=True,
+        help="Directory containing lsjson-*.json part files",
+        resolve_path=True,
     ),
     out: Path = typer.Option(..., help="Output manifest JSONL path", resolve_path=True),
     run_id: Optional[str] = typer.Option(
@@ -666,10 +675,16 @@ def manifest_combine(
                 bytes_total += size
 
                 mtime = item.get("ModTime")
-                hashes = item.get("Hashes") if isinstance(item.get("Hashes"), dict) else {}
+                hashes = (
+                    item.get("Hashes") if isinstance(item.get("Hashes"), dict) else {}
+                )
                 etag = item.get("ETag") or item.get("etag")
                 storage_class = item.get("StorageClass")
-                meta = item.get("Metadata") if isinstance(item.get("Metadata"), dict) else {}
+                meta = (
+                    item.get("Metadata")
+                    if isinstance(item.get("Metadata"), dict)
+                    else {}
+                )
 
                 rec = {
                     "schema": SCHEMA,
@@ -695,7 +710,9 @@ def manifest_combine(
                     last_progress_n = n
 
     _write_progress()
-    eprint(f"Combined {len(part_files)} parts -> {n} items, {bytes_total} bytes -> {out}")
+    eprint(
+        f"Combined {len(part_files)} parts -> {n} items, {bytes_total} bytes -> {out}"
+    )
 
 
 # -----------------------------
@@ -1001,7 +1018,9 @@ def slurm_submit(
     sbatch_script = run_dir / "sbatch_array.sh"
     if not sbatch_script.exists():
         raise typer.BadParameter(f"Missing {sbatch_script}. Run `slurm render` first.")
-    cp = run_cmd(["sbatch", "--export=NONE", str(sbatch_script)], capture=True, check=True)
+    cp = run_cmd(
+        ["sbatch", "--export=NONE", str(sbatch_script)], capture=True, check=True
+    )
     print(cp.stdout.strip())
 
 
