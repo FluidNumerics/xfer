@@ -1,6 +1,6 @@
 ---
 name: xfer-rclone-config
-description: Create or extend an rclone.conf for xfer — collect S3 endpoints and credentials for each remote (source, destination, optional staging), write the config with 0600 permissions, optionally test it, and guide the user through deploying it to each Slurm cluster that will run xfer jobs. Use whenever the user needs to set up rclone remotes, is bootstrapping a new transfer, or an existing skill reports a missing/incomplete rclone.conf.
+description: Create or extend an rclone.conf for xfer — collect S3 endpoints and credentials for each remote (source, destination, optional staging), write the config with 0600 permissions, optionally test it, and guide the user through deploying it to each Slurm cluster that will run xfer jobs. Use whenever the user needs to set up rclone remotes, is bootstrapping a new transfer, or a previous step discovered a missing rclone.conf on a cluster.
 ---
 
 # xfer-rclone-config
@@ -13,15 +13,15 @@ Authors an rclone.conf suitable for xfer. The config is consumed by **containeri
 
 The authoritative template is `rclone.conf.example` at the repo root.
 
-## Critical invariant — paths are per-system
+## Per-stage rclone.conf paths
 
-The `--rclone-config` flag always takes an **absolute path on whichever host the xfer command runs on**. That host differs between stages:
+See CLAUDE.md's "Paths are per-system" cross-cutting invariant. Applied to `--rclone-config`, the host where each stage runs is:
 
-- `xfer manifest build` — path on the **build cluster's login node**
-- `xfer slurm render` — the path baked into `sbatch_array.sh` must be valid on the **transfer cluster's compute nodes**
-- Local `uv run xfer analyze/shard/rebase` — path on the **workstation** (only if the user wants to sanity-check remotes locally via host rclone)
+- `xfer manifest build` — build cluster's login node
+- `xfer slurm render` — transfer cluster's compute nodes (the path is embedded into `sbatch_array.sh` and resolved at job time)
+- Local `uv run xfer analyze/shard/rebase` — workstation (only if the user wants to sanity-check remotes via host rclone)
 
-A single workstation config does not automatically work on the cluster. **Always ask for and record the path per system.** Do not assume `~/.config/rclone/rclone.conf` on the workstation resolves the same way on the cluster — home directories, shared scratch, and site-standard locations (e.g., `/etc/rclone/rclone.conf`) all differ.
+Collect the absolute path per system — don't assume `~/.config/rclone/rclone.conf` means the same thing on every host.
 
 ## Step 1 — Inventory what's needed
 

@@ -42,7 +42,9 @@ Always write to a new file (don't overwrite `manifest.jsonl`). Keeping the origi
 
 Sharding is derived from the manifest, so **re-shard after rebasing**. The existing `run/shards/` directory contains pre-rebase paths and must be replaced.
 
-Confirm with the user before removing the old shards (`run/shards` is small but removing it is irreversible locally):
+**Before running the command below, ask the user explicitly:** "OK to delete `run/shards/` and re-generate from the rebased manifest?" Offer to move it aside (`mv run/shards run/shards.pre-rebase`) as a safer alternative if they want to keep the old shards for debugging.
+
+Only after explicit confirmation:
 
 ```bash
 rm -rf run/shards

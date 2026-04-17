@@ -85,8 +85,7 @@ ssh <user>@<login-node> '
     --dest   <dest> \
     --out    run/manifest.jsonl \
     --rclone-image rclone/rclone:latest \
-    --rclone-config <rclone-conf-path-on-this-cluster> \
-    --extra-lsjson-flags "--fast-list"
+    --rclone-config <rclone-conf-path-on-this-cluster>
 '
 ```
 
@@ -94,7 +93,7 @@ ssh <user>@<login-node> '
 
 Notes:
 - If the source is a POSIX path, the `--source` value is the filesystem path (e.g., `/mnt/data/dataset`), not an rclone remote. The destination remains an rclone remote.
-- `--fast-list` is usually a win for S3 sources. Skip it for POSIX sources.
+- `--fast-list` is already the default for S3 sources (see `cli.py:200`). Pass `--no-fast-list` when the source is a POSIX path.
 - Stream output back so the user sees progress. Don't background it.
 
 ## Step 4 — Retrieve the manifest and note the vantage point
