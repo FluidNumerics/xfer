@@ -309,6 +309,37 @@ run/
 
 ---
 
+## Using Claude Code with xfer
+
+This repo ships a set of [Claude Code](https://claude.com/claude-code) skills under `.claude/skills/` that walk through each stage of a transfer. Each skill drives the corresponding `xfer` subcommand and encodes conventions we've found important on real clusters.
+
+### Available skills
+
+Invoke each by intent in a Claude Code session, or explicitly via `/<skill-name>`:
+
+| Skill                    | Stage                                                                |
+| ------------------------ | -------------------------------------------------------------------- |
+| `xfer-rclone-config`     | Create `rclone.conf` and deploy it to each cluster                   |
+| `xfer-manifest-build`    | Run `xfer manifest build` on a login node (POSIX source preferred)   |
+| `xfer-manifest-analyze`  | File-size histogram → suggested rclone flags and shard count         |
+| `xfer-manifest-shard`    | Byte-balanced split of the manifest into shards                      |
+| `xfer-manifest-rebase`   | Remap source/dest roots when the transfer host's view differs        |
+| `xfer-slurm-render`      | Render `worker.sh` / `sbatch_array.sh` / `config.resolved.json`      |
+| `xfer-slurm-submit`      | Stage the run directory to the cluster and `sbatch`                  |
+
+See `CLAUDE.md` for the cross-cutting context Claude loads in every session in this repo.
+
+### Conventions
+
+The skills (and `CLAUDE.md`) enforce a few invariants. These apply whether you drive xfer through Claude Code or by hand:
+
+- **Workstation orchestrates, clusters execute.** Run xfer from a local checkout in a `uv` environment. SSH to Slurm login nodes for `manifest build` and `sbatch`; `analyze`, `shard`, `rebase`, and `render` run locally.
+- **Paths are per-system.** `--rclone-config`, the xfer repo path, and the run directory all differ between workstation, build cluster, and transfer cluster. Always resolve the correct absolute path on whichever host the command runs on — do not assume a workstation path resolves identically on a cluster.
+- **POSIX-first manifest build.** If any Slurm cluster has a POSIX mount of the source bucket, build the manifest there against the POSIX path. Listing is latency-bound, and POSIX beats S3 by a wide margin.
+- **CPU-only, load-aware transfer.** Prefer CPU-only partitions for both build and transfer. Pick the transfer cluster by current `sinfo`/`squeue` load rather than by habit.
+- **Vantage change ⇒ rebase.** When the host that will run the transfer has a different view of source or destination than the host that built the manifest, run `xfer manifest rebase` and re-shard before render. Skipping this makes every array task fail identically.
+- **Credential hygiene.** Keep `rclone.conf` at mode `0600` on every host it lives on. Never commit it to the repo, and confirm before transmitting it over `scp`.
+
 ## Design notes
 
 * **Manifest is immutable** → enables reproducibility and auditing
