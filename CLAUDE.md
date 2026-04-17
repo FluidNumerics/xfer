@@ -17,17 +17,24 @@ The **user's local workstation** is the orchestrator. Long-running and compute-b
 
 ## Workflow skills
 
-Use these in order; each `Skill` trigger runs the corresponding stage. Invoke explicitly when the user's intent matches.
+The main pipeline is `build → analyze → shard → (rebase) → render → submit`. Invoke each skill when the user's intent matches its stage.
 
 | Skill                     | Stage                                                                  |
 | ------------------------- | ---------------------------------------------------------------------- |
-| `xfer-rclone-config`      | Create rclone.conf, deploy to each cluster that will run xfer jobs     |
 | `xfer-manifest-build`     | Run `xfer manifest build` on a login node (POSIX-preferred source)     |
 | `xfer-manifest-analyze`   | File-size histogram → suggested rclone flags + shard count             |
 | `xfer-manifest-shard`     | Byte-balanced split of the manifest into `run/shards/`                 |
 | `xfer-manifest-rebase`    | Remap source/dest roots when vantage changes; re-shard after           |
 | `xfer-slurm-render`       | Render `worker.sh` / `sbatch_array.sh` / `config.resolved.json`        |
 | `xfer-slurm-submit`       | Stage run dir to transfer cluster, `sbatch`, return monitoring cmds    |
+
+**On-demand / alternative entry points:**
+
+| Skill                     | When to use                                                            |
+| ------------------------- | ---------------------------------------------------------------------- |
+| `xfer-rclone-config`      | One-time (per cluster) setup — create/deploy rclone.conf. Invoke when another skill discovers a missing config. |
+| `xfer-manifest-combine`   | Alternative to `build` when the user already has parallel `rclone lsjson` parts and needs them unified into a single manifest. |
+| `xfer-oneshot`            | `xfer run` escape hatch for small/simple transfers that don't need the staged knobs. Redirect to the staged pipeline for large or cross-vantage jobs. |
 
 ## Dev conventions
 

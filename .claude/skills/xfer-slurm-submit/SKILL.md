@@ -47,6 +47,17 @@ If this is a re-submit after failure, do **not** `--delete` — preserve any `.d
 
 ## Step 3 — Submit
 
+**Prefer `uv run xfer slurm submit`** when the xfer repo is available on the transfer cluster's login node (same pre-flight as `xfer-manifest-build` — `uv` installed, repo synced, `.venv` bootstrapped). The CLI wraps `sbatch --export=NONE` (see `cli.py:1021`) so env vars from the parent shell don't leak into the array job:
+
+```bash
+ssh <user>@<login-node> '
+  cd <xfer-repo-path> &&
+  uv run xfer slurm submit --run-dir <remote-run-dir>
+'
+```
+
+If the xfer repo isn't on the transfer cluster (and the user doesn't want to stage it), fall back to raw `sbatch`:
+
 ```bash
 ssh <user>@<login-node> '
   cd <remote-run-dir> &&
@@ -54,7 +65,7 @@ ssh <user>@<login-node> '
 '
 ```
 
-`--export=NONE` is important — it prevents the workstation's or parent job's `SLURM_*` env from leaking into the array job (per the existing project convention; see `.claude/settings.local.json`).
+`--export=NONE` is important either way — it prevents `SLURM_*` env from the workstation or a parent job from leaking into the array job (e.g., a stale `SLURM_MEM_PER_NODE` colliding with `SLURM_MEM_PER_CPU`).
 
 Capture the returned job id (e.g., `Submitted batch job 12345`).
 

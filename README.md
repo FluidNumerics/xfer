@@ -315,17 +315,26 @@ This repo ships a set of [Claude Code](https://claude.com/claude-code) skills un
 
 ### Available skills
 
-Invoke each by intent in a Claude Code session, or explicitly via `/<skill-name>`:
+Invoke each by intent in a Claude Code session, or explicitly via `/<skill-name>`.
+
+Main pipeline (`build → analyze → shard → (rebase) → render → submit`):
 
 | Skill                    | Stage                                                                |
 | ------------------------ | -------------------------------------------------------------------- |
-| `xfer-rclone-config`     | Create `rclone.conf` and deploy it to each cluster                   |
 | `xfer-manifest-build`    | Run `xfer manifest build` on a login node (POSIX source preferred)   |
 | `xfer-manifest-analyze`  | File-size histogram → suggested rclone flags and shard count         |
 | `xfer-manifest-shard`    | Byte-balanced split of the manifest into shards                      |
 | `xfer-manifest-rebase`   | Remap source/dest roots when the transfer host's view differs        |
 | `xfer-slurm-render`      | Render `worker.sh` / `sbatch_array.sh` / `config.resolved.json`      |
 | `xfer-slurm-submit`      | Stage the run directory to the cluster and `sbatch`                  |
+
+On-demand / alternative entry points:
+
+| Skill                    | When to use                                                          |
+| ------------------------ | -------------------------------------------------------------------- |
+| `xfer-rclone-config`     | One-time (per cluster) setup — create/deploy `rclone.conf`           |
+| `xfer-manifest-combine`  | Combine parallel `rclone lsjson` parts into a single manifest         |
+| `xfer-oneshot`           | `xfer run` escape hatch for small transfers that don't need the staged knobs |
 
 See `CLAUDE.md` for the cross-cutting context Claude loads in every session in this repo.
 
