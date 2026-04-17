@@ -450,6 +450,199 @@ def print_histogram(
 
 
 # -----------------------------
+# Analysis functions for programmatic use
+# -----------------------------
+@dataclass
+class FileSizeStats:
+    """Statistics about file sizes in a dataset."""
+
+    total_files: int
+    total_bytes: int
+    min_size: int
+    max_size: int
+    median_size: int
+    mean_size: float
+    p10_size: int  # 10th percentile
+    p90_size: int  # 90th percentile
+    small_files_pct: float  # % of files < 1MB
+    medium_files_pct: float  # % of files 1MB - 100MB
+    large_files_pct: float  # % of files > 100MB
+
+
+def compute_file_size_stats(sizes: List[int]) -> FileSizeStats:
+    """Compute statistics about file sizes."""
+    if not sizes:
+        return FileSizeStats(
+            total_files=0,
+            total_bytes=0,
+            min_size=0,
+            max_size=0,
+            median_size=0,
+            mean_size=0.0,
+            p10_size=0,
+            p90_size=0,
+            small_files_pct=0.0,
+            medium_files_pct=0.0,
+            large_files_pct=0.0,
+        )
+
+    sorted_sizes = sorted(sizes)
+    n = len(sorted_sizes)
+    total = sum(sizes)
+
+    # Percentile helper
+    def percentile(p: float) -> int:
+        idx = int(p * (n - 1))
+        return sorted_sizes[idx]
+
+    # Size thresholds
+    small_threshold = 1024 * 1024  # 1 MB
+    large_threshold = 100 * 1024 * 1024  # 100 MB
+
+    small_count = sum(1 for s in sizes if s < small_threshold)
+    large_count = sum(1 for s in sizes if s > large_threshold)
+    medium_count = n - small_count - large_count
+
+    return FileSizeStats(
+        total_files=n,
+        total_bytes=total,
+        min_size=sorted_sizes[0],
+        max_size=sorted_sizes[-1],
+        median_size=percentile(0.5),
+        mean_size=total / n,
+        p10_size=percentile(0.1),
+        p90_size=percentile(0.9),
+        small_files_pct=100.0 * small_count / n,
+        medium_files_pct=100.0 * medium_count / n,
+        large_files_pct=100.0 * large_count / n,
+    )
+
+
+@dataclass
+class RcloneFlagsSuggestion:
+    """Suggested rclone flags based on file size distribution."""
+
+    profile: str  # "small_files", "large_files", or "mixed"
+    flags: str
+    explanation: str
+
+
+def suggest_rclone_flags_from_sizes(sizes: List[int]) -> RcloneFlagsSuggestion:
+    """
+    Analyze file sizes and suggest optimal rclone flags.
+
+    Profiles:
+    - small_files: Many small files (>70% < 1MB) - high parallelism
+    - large_files: Many large files (>50% > 100MB) - fewer streams, larger buffers
+    - mixed: Default balanced settings
+    """
+    stats = compute_file_size_stats(sizes)
+
+    if stats.total_files == 0:
+        return RcloneFlagsSuggestion(
+            profile="empty",
+            flags="--transfers 32 --checkers 64 --fast-list",
+            explanation="No files to analyze, using default settings",
+        )
+
+    # Small files profile: high parallelism for many small files
+    if stats.small_files_pct > 70 or stats.median_size < 1024 * 1024:
+        return RcloneFlagsSuggestion(
+            profile="small_files",
+            flags="--transfers 64 --checkers 128 --fast-list",
+            explanation=f"Optimized for small files ({stats.small_files_pct:.0f}% < 1MB, median {human_bytes(stats.median_size)})",
+        )
+
+    # Large files profile: fewer streams, larger buffers
+    if stats.large_files_pct > 50 or stats.median_size > 100 * 1024 * 1024:
+        return RcloneFlagsSuggestion(
+            profile="large_files",
+            flags="--transfers 16 --checkers 32 --buffer-size 256M",
+            explanation=f"Optimized for large files ({stats.large_files_pct:.0f}% > 100MB, median {human_bytes(stats.median_size)})",
+        )
+
+    # Mixed/default profile
+    return RcloneFlagsSuggestion(
+        profile="mixed",
+        flags="--transfers 32 --checkers 64 --fast-list",
+        explanation=f"Balanced settings for mixed file sizes (median {human_bytes(stats.median_size)})",
+    )
+
+
+def format_histogram_data(
+    sizes: List[int],
+) -> List[Dict[str, Any]]:
+    """
+    Return histogram as structured data (for JSON serialization).
+
+    Returns list of dicts with: range_label, count, pct_files, bytes, pct_bytes
+    """
+    if not sizes:
+        return []
+
+    obs_min = max(1, min(sizes))
+    obs_max = max(sizes)
+
+    # Use power-of-2 bins
+    min_b = 2 ** int(math.floor(math.log2(obs_min)))
+    max_b = 2 ** int(math.ceil(math.log2(obs_max)))
+
+    edges = [float(x) for x in default_pow2_edges(min_b, max_b)]
+    counts, bytes_bin = histogram_counts(sizes, edges)
+
+    total_files = len(sizes)
+    total_bytes = sum(sizes)
+
+    result = []
+    for i in range(len(edges) - 1):
+        lo = int(edges[i])
+        hi = int(edges[i + 1])
+        c = counts[i]
+        b = bytes_bin[i]
+        pf = (100.0 * c / total_files) if total_files else 0.0
+        pb = (100.0 * b / total_bytes) if total_bytes else 0.0
+
+        result.append(
+            {
+                "range_min": lo,
+                "range_max": hi,
+                "range_label": f"{human_bytes(lo)} - {human_bytes(hi)}",
+                "file_count": c,
+                "pct_files": round(pf, 1),
+                "bytes": b,
+                "bytes_human": human_bytes(b),
+                "pct_bytes": round(pb, 1),
+            }
+        )
+
+    return result
+
+
+def format_histogram_text(sizes: List[int], width: int = 30) -> str:
+    """Format histogram as text for display in Slack/terminal."""
+    if not sizes:
+        return "No files to display"
+
+    hist_data = format_histogram_data(sizes)
+    counts = [h["file_count"] for h in hist_data]
+    max_count = max(counts) if counts else 0
+
+    lines = ["File size distribution:"]
+    lines.append("")
+
+    for h in hist_data:
+        if h["file_count"] == 0:
+            continue
+        bar_len = int((h["file_count"] / max_count) * width) if max_count > 0 else 0
+        bar = "█" * bar_len
+        lines.append(
+            f"  {h['range_label']:>20}: {h['file_count']:>8} files ({h['pct_files']:5.1f}%) {bar}"
+        )
+
+    return "\n".join(lines)
+
+
+# -----------------------------
 # Main
 # -----------------------------
 def main() -> int:
