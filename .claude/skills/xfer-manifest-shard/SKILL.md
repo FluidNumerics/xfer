@@ -13,22 +13,21 @@ Runs **locally on the workstation**. Pure file processing. No Slurm/SSH needed.
 
 ## Step 1 — Read the analyze output
 
-Read `run/analyze.json` (from `xfer-manifest-analyze`). Use its `suggested_shard_count` / profile as the starting point. If analyze hasn't been run yet, invoke `xfer-manifest-analyze` first — don't guess shard counts from the raw manifest.
+Read `run/analyze.json` (from `xfer-manifest-analyze`) and use `suggested_shard_count` directly as the shard count. The analyzer already factors in the 10 TiB/shard cap, the expected array concurrency, and (if supplied) the core budget.
 
-## Step 2 — Reconcile shard count with cluster resources
+If `run/analyze.json` doesn't exist yet, invoke `xfer-manifest-analyze` first — don't guess shard counts from the raw manifest.
 
-The right shard count depends on **both** rclone settings (from analyze) **and** the transfer cluster's available resources. Ask the user:
+## Step 2 — Decide whether to override
 
-1. Which cluster will run the transfer? (Same as build host, or different?)
-2. What's the target array concurrency — how many shards should run at once? Typical range: 32–256, capped by the partition's `MaxArraySize` and the throughput both S3 endpoints can handle.
-3. What's the partition's per-node core/memory budget?
+Only override `suggested_shard_count` if one of the inputs that fed it has changed since analyze ran:
 
-Rule of thumb:
-- Total shards ≈ max(suggested_shard_count_from_analyze, 4 × array_concurrency). This gives the scheduler enough slack to keep the array fully packed even as slow shards trail.
-- For small-files profiles (heavy listing, light bytes), bias toward **more shards** of fewer objects each.
-- For large-files profiles (heavy bytes, few objects), bias toward **fewer shards** with more bytes each — byte-balancing matters more than object count.
+- The transfer cluster is different from what analyze assumed (different core budget).
+- The array concurrency cap is different from what analyze assumed (defaults: `--assumed-array-concurrency=64`).
+- The user wants a different per-shard byte cap (default 10 TiB).
 
-State your recommendation with the reasoning, then confirm before running.
+In that case, **re-run `xfer-manifest-analyze`** with updated `--assumed-*` flags rather than hand-picking a new number here. Sharing the reasoning/assumptions via `run/analyze.json` is how downstream skills stay coherent.
+
+Show the user `suggested_shard_count` alongside `shard_count_reasoning` from analyze, then confirm before running.
 
 ## Step 3 — Run shard
 

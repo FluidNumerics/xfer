@@ -57,16 +57,19 @@ Collect from the user (with defaults from `run/analyze.json` and the chosen part
 | `--rclone-image`       | `rclone/rclone:latest`                                  |
 | `--rclone-config`      | absolute path to rclone.conf **on the transfer cluster's compute nodes** (see note below) |
 | `--rclone-flags`       | `suggested_flags` from `run/analyze.json`               |
-| `--max-attempts`       | 3 (default)                                             |
+| `--max-attempts`       | 5 (default)                                             |
 | `--sbatch-extras`      | site-specific `--account=...`, `--qos=...`, etc.        |
 | `--pyxis-extra`        | extra `srun --container-*` flags if site requires them  |
+| `--manifest`           | optional; path to a specific manifest (pass `run/manifest.rebased.jsonl` if the rebase skill ran) |
 
-The `--rclone-config` path is baked into `sbatch_array.sh` and resolved **on the transfer cluster at job time**, not on the workstation. It must:
+The `--rclone-config` path is baked into `sbatch_array.sh` and resolved **on the transfer cluster at job time**, not at render time. Render itself no longer requires the file to exist on the workstation — it only prints a warning if the local path is missing, since the actual consumer is the compute node. Still:
 
-- Be an absolute path valid on that cluster's compute nodes (home dirs and shared paths differ between sites).
-- Exist with `0600` permissions before the job starts.
+- The path must be an absolute path valid on the cluster's compute nodes.
+- It must exist with `0600` permissions **on the cluster** before the job starts.
 
-If the user doesn't already have the config deployed to this cluster at a known path, **stop and invoke `xfer-rclone-config`** to set it up and record the path. Don't guess the path — a wrong value here means every array task will fail identically at container start.
+If the user doesn't already have the config deployed to the cluster at a known path, invoke `xfer-rclone-config` to set it up and record the path. A wrong value here means every array task will fail identically at container start, so double-check the path.
+
+Use `--manifest` whenever the user ran `xfer-manifest-rebase`: render reads `source_root` / `dest_root` from a manifest file, and the default path (`<run_dir>/manifest.jsonl`) is intentionally left at the pre-rebase vantage point as an audit record. Passing `--manifest run/manifest.rebased.jsonl` is how render picks up the rebased roots.
 
 ## Step 4 — Render
 
@@ -83,9 +86,10 @@ uv run xfer slurm render \
   --rclone-image <image> \
   --rclone-config <path-on-cluster> \
   --rclone-flags "<flags-from-analyze>" \
-  --max-attempts 3 \
+  --max-attempts 5 \
   --sbatch-extras '<multi-line sbatch directives>' \
-  --pyxis-extra '<extra pyxis flags>'
+  --pyxis-extra '<extra pyxis flags>' \
+  [--manifest run/manifest.rebased.jsonl]    # only after rebase
 ```
 
 ## Step 5 — Verify the outputs

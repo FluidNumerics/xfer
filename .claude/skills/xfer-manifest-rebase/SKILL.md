@@ -40,7 +40,9 @@ Always write to a new file (don't overwrite `manifest.jsonl`). Keeping the origi
 
 ## Step 3 — Re-shard
 
-Sharding is derived from the manifest, so **re-shard after rebasing**:
+Sharding is derived from the manifest, so **re-shard after rebasing**. The existing `run/shards/` directory contains pre-rebase paths and must be replaced.
+
+Confirm with the user before removing the old shards (`run/shards` is small but removing it is irreversible locally):
 
 ```bash
 rm -rf run/shards
@@ -50,16 +52,26 @@ uv run xfer manifest shard \
   --num-shards <same-N-as-before>
 ```
 
-(Or invoke `xfer-manifest-shard`.) Byte balance won't change meaningfully, but the shard files need to carry the rebased paths or workers will try to copy from the wrong URI.
+(Or invoke `xfer-manifest-shard` with the rebased manifest as input.) Byte balance won't change meaningfully, but the shard files need to carry the rebased paths or workers will try to copy from the wrong URI.
 
-## Step 4 — Point downstream skills at the rebased manifest
+## Step 4 — Point `xfer slurm render` at the rebased manifest
 
-When you invoke `xfer-slurm-render` next, pass `--run-dir run` but ensure `config.resolved.json` references the rebased manifest. If the user plans a fresh `xfer slurm render`, that's automatic (render reads from `run/shards/`).
+`xfer slurm render` reads `source_root` and `dest_root` from a manifest file. By default it reads `<run_dir>/manifest.jsonl`, which is intentionally left at the pre-rebase vantage point as an audit record. Pass `--manifest` to read the rebased file instead:
+
+```bash
+uv run xfer slurm render \
+  --run-dir run \
+  --manifest run/manifest.rebased.jsonl \
+  ...
+```
+
+Without `--manifest`, render would use the original roots and every array task would target the wrong URI.
 
 ## Safety
 
 - Never delete the original manifest — always keep `run/manifest.jsonl` as an audit trail alongside `run/manifest.rebased.jsonl`.
 - Rebase is a remap, not a content migration. It does not move data. It only relabels what each shard points to.
+- Confirm before `rm -rf run/shards` — the user may want to move the old shards aside rather than delete them.
 
 ## After this skill
 

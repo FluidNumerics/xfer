@@ -569,6 +569,90 @@ def suggest_rclone_flags_from_sizes(sizes: List[int]) -> RcloneFlagsSuggestion:
     )
 
 
+@dataclass
+class ShardCountSuggestion:
+    """Suggested shard count for `xfer manifest shard` based on bytes, cores, and concurrency."""
+
+    num_shards: int
+    reasoning: str
+    assumptions: Dict[str, Any]
+
+
+def suggest_shard_count(
+    total_bytes: int,
+    *,
+    cpus_per_task: int = 4,
+    array_concurrency: int = 64,
+    core_budget: Optional[int] = None,
+    max_shard_bytes_tb: int = 10,
+) -> ShardCountSuggestion:
+    """
+    Suggest a shard count for a transfer based on three constraints:
+
+    1. Bytes cap: no single shard should carry more than ``max_shard_bytes_tb`` TiB
+       of data (worker wall-clock dominates the array's long tail otherwise).
+    2. Concurrency cap: producing more than ``4 * array_concurrency`` shards is
+       wasteful (the scheduler only needs enough slack to keep the queue packed
+       as slow shards trail).
+    3. Core cap (optional): if ``core_budget`` is supplied, the array can't
+       usefully exceed ``core_budget // cpus_per_task`` concurrent workers, so
+       producing more shards just lengthens the queue.
+
+    Special case: if ``total_bytes`` is below the per-shard cap, return
+    ``num_shards=1`` — sharding isn't helpful.
+    """
+    tib = 1024**4
+    max_shard_bytes = max_shard_bytes_tb * tib
+
+    assumptions: Dict[str, Any] = {
+        "total_bytes": total_bytes,
+        "cpus_per_task": cpus_per_task,
+        "array_concurrency": array_concurrency,
+        "core_budget": core_budget,
+        "max_shard_bytes_tb": max_shard_bytes_tb,
+    }
+
+    if total_bytes < max_shard_bytes:
+        reasoning = (
+            f"total_bytes ({human_bytes(total_bytes)}) is below the per-shard cap "
+            f"({max_shard_bytes_tb} TiB); a single shard is sufficient."
+        )
+        return ShardCountSuggestion(
+            num_shards=1, reasoning=reasoning, assumptions=assumptions
+        )
+
+    shards_by_bytes = math.ceil(total_bytes / max_shard_bytes)
+    shards_by_concurrency = 4 * array_concurrency
+    shards_by_cores: Optional[int] = None
+    if core_budget is not None:
+        shards_by_cores = max(1, core_budget // cpus_per_task)
+
+    upper = shards_by_concurrency
+    if shards_by_cores is not None:
+        upper = min(upper, shards_by_cores)
+
+    num_shards = max(1, min(upper, max(shards_by_bytes, 1)))
+
+    reasoning_parts = [
+        f"shards_by_bytes={shards_by_bytes} "
+        f"(total {human_bytes(total_bytes)} / {max_shard_bytes_tb} TiB cap)",
+        f"shards_by_concurrency={shards_by_concurrency} (4 x {array_concurrency})",
+    ]
+    if shards_by_cores is not None:
+        reasoning_parts.append(
+            f"shards_by_cores={shards_by_cores} "
+            f"({core_budget} cores / {cpus_per_task} cpus_per_task)"
+        )
+    reasoning_parts.append(
+        f"chose max(1, min(upper={upper}, shards_by_bytes)) = {num_shards}"
+    )
+    reasoning = "; ".join(reasoning_parts)
+
+    return ShardCountSuggestion(
+        num_shards=num_shards, reasoning=reasoning, assumptions=assumptions
+    )
+
+
 def format_histogram_data(
     sizes: List[int],
 ) -> List[Dict[str, Any]]:
