@@ -467,6 +467,25 @@ def manifest_analyze(
         "--retries 10 --low-level-retries 20 --stats 600s --progress",
         help="Base rclone flags to always include",
     ),
+    assumed_cpus_per_task: int = typer.Option(
+        4,
+        min=1,
+        help="Cores per shard worker (matches slurm_render default). Used only for shard-count suggestion.",
+    ),
+    assumed_array_concurrency: int = typer.Option(
+        64,
+        min=1,
+        help="Expected Slurm array concurrency (matches slurm_render default). Used only for shard-count suggestion.",
+    ),
+    assumed_core_budget: Optional[int] = typer.Option(
+        None,
+        help="Total cores the transfer cluster's partition will make available. Used only for shard-count suggestion. If omitted, the core constraint is skipped.",
+    ),
+    max_shard_bytes_tb: int = typer.Option(
+        10,
+        min=1,
+        help="Per-shard byte cap in TiB (no single shard should exceed this).",
+    ),
 ) -> None:
     """
     Analyze manifest file sizes and suggest optimal rclone flags.
@@ -481,6 +500,7 @@ def manifest_analyze(
         format_histogram_data,
         human_bytes,
         suggest_rclone_flags_from_sizes,
+        suggest_shard_count,
     )
 
     # Read manifest and extract sizes
@@ -505,6 +525,13 @@ def manifest_analyze(
         stats = compute_file_size_stats(sizes)
         suggestion = suggest_rclone_flags_from_sizes(sizes)
         histogram = format_histogram_data(sizes)
+        shard_suggestion = suggest_shard_count(
+            stats.total_bytes,
+            cpus_per_task=assumed_cpus_per_task,
+            array_concurrency=assumed_array_concurrency,
+            core_budget=assumed_core_budget,
+            max_shard_bytes_tb=max_shard_bytes_tb,
+        )
 
         # Combine base flags with profile-specific flags
         combined_flags = f"{suggestion.flags} {base_flags}"
@@ -528,6 +555,9 @@ def manifest_analyze(
             "profile": suggestion.profile,
             "profile_explanation": suggestion.explanation,
             "suggested_flags": combined_flags,
+            "suggested_shard_count": shard_suggestion.num_shards,
+            "shard_count_reasoning": shard_suggestion.reasoning,
+            "shard_count_assumptions": shard_suggestion.assumptions,
             "histogram": histogram,
         }
 
@@ -882,9 +912,7 @@ def slurm_render(
     rclone_image: str = typer.Option(..., help="Container image containing rclone"),
     rclone_config: Path = typer.Option(
         ...,
-        exists=True,
-        dir_okay=False,
-        help="Host path to rclone.conf",
+        help="Absolute path to rclone.conf on the transfer cluster's compute nodes. Not required to exist on this host; a warning is emitted if it is missing locally.",
         resolve_path=True,
     ),
     rclone_conf_in_container: str = typer.Option(
@@ -911,6 +939,11 @@ def slurm_render(
     pyxis_extra: str = typer.Option(
         "", help="Extra pyxis flags (string placed after --container-mounts...)"
     ),
+    manifest: Optional[Path] = typer.Option(
+        None,
+        help="Manifest JSONL to read source/dest_root from. Defaults to <run_dir>/manifest.jsonl. Use this after `xfer manifest rebase` to point render at the rebased file.",
+        resolve_path=True,
+    ),
 ) -> None:
     """
     Render worker.sh, sbatch_array.sh, and submit.sh under run_dir.
@@ -919,12 +952,19 @@ def slurm_render(
     mkdirp(run_dir / "logs")
     mkdirp(run_dir / "state")
 
-    # If source/dest not provided, try to read first line of manifest.jsonl (if present)
+    if not rclone_config.exists():
+        eprint(
+            f"WARNING: rclone_config {rclone_config} does not exist on this host. "
+            "That is fine if the path is valid on the transfer cluster's compute nodes. "
+            "Verify before submitting."
+        )
+
+    # If source/dest not provided, try to read first line of the manifest (if present)
     if source_root is None or dest_root is None:
-        manifest = run_dir / "manifest.jsonl"
-        if manifest.exists():
+        manifest_path = manifest or (run_dir / "manifest.jsonl")
+        if manifest_path.exists():
             first = None
-            for ln in manifest.read_text(encoding="utf-8").splitlines():
+            for ln in manifest_path.read_text(encoding="utf-8").splitlines():
                 if ln.strip():
                     first = json.loads(ln)
                     break
@@ -934,7 +974,7 @@ def slurm_render(
 
     if not source_root or not dest_root:
         raise typer.BadParameter(
-            "source_root/dest_root not set and could not be read from run_dir/manifest.jsonl"
+            "source_root/dest_root not set and could not be read from the manifest (pass --manifest, --source-root, and/or --dest-root explicitly)"
         )
 
     # Write scripts
